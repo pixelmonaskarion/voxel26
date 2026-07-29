@@ -4,6 +4,11 @@ use runner::common_main;
 mod game;
 mod instance;
 mod runner;
+mod chunk;
+mod blocks;
+mod util;
+mod player;
+mod block_models;
 
 include!(concat!(env!("OUT_DIR"), "/resources.rs"));
 

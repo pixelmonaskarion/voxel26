@@ -1,28 +1,34 @@
 use std::{collections::HashMap, time::{SystemTime, UNIX_EPOCH}};
 
-use bespoke_engine::{binding::{simple_layout_entry, Binding, Descriptor, UniformBinding}, camera::{Camera, CameraRaw}, model::{Render, ToRaw}, shader::{Shader, ShaderType}, surface_context::SurfaceCtx, texture::Texture, window::{WindowConfig, WindowHandler}};
+use bespoke_engine::{binding::{Binding, Descriptor, UniformBinding, simple_layout_entry}, camera::{Camera, CameraRaw}, model::{Render, ToRaw}, resource_loader::{load_resource, load_resource_string}, shader::{Shader, ShaderConfig, ShaderType}, surface_context::SurfaceCtx, texture::Texture, window::{WindowConfig, WindowHandler}};
 use bytemuck::{bytes_of, NoUninit};
-use cgmath::{Vector2, Vector3};
+use cgmath::{Vector2, Vector3, vec3};
 use wgpu::{Color, Features, Limits, RenderPass};
-use winit::{dpi::PhysicalPosition, event::{KeyEvent, TouchPhase}, keyboard::{KeyCode, PhysicalKey::Code}};
+use winit::{dpi::PhysicalPosition, event::{KeyEvent, Modifiers, TouchPhase}, keyboard::{KeyCode, PhysicalKey::Code}};
+use crate::{RESOURCES, chunk::{CHUNK_SIZE, ChunkManager}, player::Player, util::{self}};
 
-pub struct Game {
+pub struct Game<'a> {
     camera: Camera,
+    player: Player,
     screen_size: [f32; 2],
     screen_info_binding: UniformBinding<ScreenInfo>,
     start_time: u128,
     keys_down: Vec<KeyCode>,
     touch_positions: HashMap<u64, PhysicalPosition<f64>>,
     moving_bc_finger: Option<u64>,
-    post_processing_shader: Shader,
+    post_processing_shader: Shader<'a>,
+
+    chunk_manager: ChunkManager,
+    chunk_shader: Shader<'a>,
+    atlas_uniform: UniformBinding<Texture>,
 }
 
 #[repr(C)]
 #[derive(NoUninit, Copy, Clone)]
 pub struct Vertex {
-    pub position: [f32; 3],
-    pub tex_pos: [f32; 2],
-    pub normal: [f32; 3],
+    pub position: [f32; 4],
+    pub color: [f32; 4],
+    pub normal: [f32; 4],
 }
 
 impl Vertex {
@@ -42,17 +48,17 @@ impl Descriptor for Vertex {
                 wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: wgpu::VertexFormat::Float32x4,
                 },
             ],
         }
@@ -66,23 +72,51 @@ impl ToRaw for Vertex {
 }
 
 
-impl Game {
-    pub fn new(surface_ctx: &dyn SurfaceCtx) -> Self {
+impl <'a> Game<'a> {
+    pub async fn new(surface_ctx: &dyn SurfaceCtx) -> Self {
         let screen_size = [surface_ctx.size().0 as f32, surface_ctx.size().1 as f32];
         let camera = Camera {
-            eye: Vector3::new(1.0, 0.0, 0.0),
+            eye: Vector3::new(-1.0, 0.0, 0.0),
             aspect: screen_size[0] / screen_size[1],
             fovy: 70.0,
             znear: 0.1,
-            zfar: 100.0,
+            zfar: 10000.0,
             ground: 0.0,
             sky: 0.0,
         };
         let screen_info_binding = UniformBinding::new(surface_ctx.device(), "Screen Info", ScreenInfo::new(screen_size, 0.0, camera.to_raw()), None);
-
-        let post_processing_shader = Shader::new_post_process(include_str!("shaders/post_process.wgsl"), surface_ctx.device(), surface_ctx.config().format, vec![], vec![]);
+        let mut chunk_manager = ChunkManager::new(surface_ctx);
+        chunk_manager.get_chunk_or_create([0; 3]);
+        chunk_manager.generate_blocks([0; 3], [0.0; 3]);
+        // let low = 0;
+        // let high = 4;
+        // for cx in low..high {
+        //     for cy in low..high {
+        //         for cz in low..high {
+        //             let chunk = chunk_manager.get_chunk_or_create([cx, cy, cz], surface_ctx);
+        //             for x in 0..CHUNK_SIZE {
+        //                 for y in 0..CHUNK_SIZE {
+        //                     for z in 0..CHUNK_SIZE {
+        //                         chunk.set_block(surface_ctx, [x, y, z], index_in_chunk(x, y, z) as u16 +3);
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+        // for cx in low..high {
+        //     for cy in low..high {
+        //         for cz in low..high {
+        //             chunk_manager.generate_cpu([cx, cy, cz], surface_ctx);
+        //         }
+        //     }
+        // }
+        let post_processing_shader = Shader::new_post_process("res/shaders/post_process.wgsl", surface_ctx.device(), surface_ctx.config().format, vec![], vec![]);
+        let atlas_uniform = UniformBinding::new(surface_ctx.device(), "Atlas", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &load_resource("res/atlas.png").unwrap(), "Atlas", None, None).unwrap(), None);
+        let chunk_shader = Shader::new_uniform("res/shaders/chunk.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&screen_info_binding, &atlas_uniform], vec![Vertex::desc()], ShaderConfig { line_mode: wgpu::PolygonMode::Fill, ..Default::default() });
         Self {
             camera,
+            player: Player::new(vec3(0.0, 0.0, 0.0)),
             screen_size,
             screen_info_binding,
             start_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
@@ -90,31 +124,62 @@ impl Game {
             touch_positions: HashMap::new(),
             moving_bc_finger: None,
             post_processing_shader,
+            chunk_shader,
+            chunk_manager,
+            atlas_uniform,
         }
     }
 }
 
-impl WindowHandler for Game {
+impl <'s> WindowHandler for Game<'s> {
     fn resize(&mut self, _surface_ctx: &dyn SurfaceCtx, new_size: Vector2<u32>) {
         self.camera.aspect = new_size.x as f32 / new_size.y as f32;
         self.screen_size = [new_size.x as f32, new_size.y as f32];
     }
 
-    fn render<'a: 'b, 'b>(&'a mut self, surface_ctx: &dyn SurfaceCtx, _render_pass: & mut RenderPass<'b>, delta: f64) {
+    fn render<'a: 'b, 'b>(&'a mut self, surface_ctx: &dyn SurfaceCtx, render_pass: &mut RenderPass<'b>, delta: f64) {
         self.update(delta);
         let time = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()-self.start_time) as f32 / 1000.0;
-        self.screen_info_binding.set_data(&surface_ctx.device(), ScreenInfo::new(self.screen_size, time, self.camera.to_raw()));
+        self.screen_info_binding.set_data(surface_ctx.queue(), ScreenInfo::new(self.screen_size, time, self.camera.to_raw()));
+
+        let mut count = 0;
+        for chunk_pos in util::positions(100) {
+            let relative_pos = [chunk_pos[0] + (self.camera.eye.x / CHUNK_SIZE as f32).floor() as i32, chunk_pos[1] + (self.camera.eye.y / CHUNK_SIZE as f32).floor() as i32, chunk_pos[2] + (self.camera.eye.z / CHUNK_SIZE as f32).floor() as i32];
+            if !self.chunk_manager.chunk_exists(relative_pos) {
+                self.chunk_manager.get_chunk_or_create(relative_pos);
+                self.chunk_manager.generate_blocks(relative_pos, self.player.position.into());
+                count += 1;
+                if count == 3 {
+                    break;
+                }
+            }
+        }
+        self.chunk_manager.poll_channels(self.player.position.into());
+
+        self.chunk_shader.bind(render_pass);
+        render_pass.set_bind_group(0, &self.screen_info_binding.binding, &[]);
+        render_pass.set_bind_group(1, &self.atlas_uniform.binding, &[]);
+        if self.keys_down.contains(&KeyCode::KeyC) {
+            for chunk_position in self.chunk_manager.chunk_positions().cloned().collect::<Vec<[i32; 3]>>() {
+                self.chunk_manager.generate_model(chunk_position, self.player.position.into());
+            }
+        }
+        for chunk in self.chunk_manager.chunks(self.camera.eye.into()) {
+            if chunk.visible() {
+                chunk.render(render_pass);
+            }
+        }
     }
 
     fn config(&self) -> Option<WindowConfig> {
-        Some(WindowConfig { background_color: Some(Color::BLACK), enable_post_processing: Some(true) })
+        Some(WindowConfig { background_color: Some(Color::BLACK), enable_post_processing: Some(false) })
     }
 
     fn mouse_moved(&mut self, _surface_ctx: &dyn SurfaceCtx, _mouse_pos: PhysicalPosition<f64>) {
 
     }
     
-    fn input_event(&mut self, _surface_ctx: &dyn SurfaceCtx, input_event: &KeyEvent) {
+    fn input_event(&mut self, _surface_ctx: &dyn SurfaceCtx, input_event: &KeyEvent, _modifiers: &Modifiers) {
         if let Code(code) = input_event.physical_key {
             if input_event.state.is_pressed() {
                 if !self.keys_down.contains(&code) {
@@ -177,7 +242,7 @@ impl WindowHandler for Game {
     }
 
     fn required_features() -> wgpu::Features {
-        Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+        Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES | Features::POLYGON_MODE_LINE
     }
 
     fn surface_config() -> Option<bespoke_engine::window::SurfaceConfig> {
@@ -185,33 +250,63 @@ impl WindowHandler for Game {
     }
 
     fn custom_shader_type_source() -> String {
-        include_str!("shaders/custom_shader_types.wgsl").into()
+        load_resource_string("res/shaders/custom_shader_types.wgsl").into()
+    }
+
+    fn resources() -> Option<&'static phf::Map<&'static str, bespoke_engine::resource_loader::ResourceType>> {
+        Some(&RESOURCES)
     }
 }
 
-impl Game {
+impl <'s> Game<'s> {
     fn update(&mut self, delta: f64) {
-        let speed = 0.005 * delta as f32;
+        let speed = 100.0 * delta as f32;
         if self.keys_down.contains(&KeyCode::KeyW) || self.moving_bc_finger.is_some() {
-            self.camera.eye += self.camera.get_walking_vec() * speed;
+            self.player.velocity += self.camera.get_walking_vec() * speed;
         }
         if self.moving_bc_finger.is_some() {
-            self.camera.eye += self.camera.get_forward_vec() * speed;
+            self.player.velocity += self.camera.get_forward_vec() * speed;
         }
         if self.keys_down.contains(&KeyCode::KeyS) {
-            self.camera.eye -= self.camera.get_walking_vec() * speed;
+            self.player.velocity -= self.camera.get_walking_vec() * speed;
         }
         if self.keys_down.contains(&KeyCode::KeyA) {
-            self.camera.eye -= self.camera.get_right_vec() * speed;
+            self.player.velocity -= self.camera.get_right_vec() * speed;
         }
         if self.keys_down.contains(&KeyCode::KeyD) {
-            self.camera.eye += self.camera.get_right_vec() * speed;
+            self.player.velocity += self.camera.get_right_vec() * speed;
         }
         if self.keys_down.contains(&KeyCode::Space) {
-            self.camera.eye += Vector3::unit_y() * speed;
+            if self.player.time_since_ground < 0.1 {
+                self.player.velocity += Vector3::unit_y() * 7.0;
+                self.player.time_since_ground = 1.0;
+            }
         }
-        if self.keys_down.contains(&KeyCode::ShiftLeft) {
-            self.camera.eye -= Vector3::unit_y() * speed;
+        if self.player.movement_move == 1 {
+            if self.keys_down.contains(&KeyCode::ShiftLeft) {
+                self.player.velocity -= Vector3::unit_y() * speed;
+            }
+            if self.keys_down.contains(&KeyCode::Space) {
+                self.player.velocity += Vector3::unit_y() * speed;
+            }
+        }
+        if self.player.movement_move == 0 {
+            self.player.velocity.y -= 20.0 * delta as f32;
+        }
+        self.player.velocity.x *= 0.9;
+        self.player.velocity.z *= 0.9;
+        if self.player.movement_move == 1 {
+            self.player.velocity.y *= 0.9;
+        }
+        self.player.time_since_ground += delta;
+        self.player.move_player(self.player.velocity * delta as f32, &self.chunk_manager);
+        self.camera.eye = self.player.position;
+
+        if self.keys_down.contains(&KeyCode::KeyC) {
+            self.player.movement_move = 1;
+        }
+        if self.keys_down.contains(&KeyCode::KeyV) {
+            self.player.movement_move = 0;
         }
     }
 }
@@ -237,7 +332,7 @@ impl ScreenInfo {
 }
 
 impl Binding for ScreenInfo {
-    fn create_resources<'a>(&'a self) -> Vec<bespoke_engine::binding::Resource> {
+    fn create_resources<'a>(&'_ self) -> Vec<bespoke_engine::binding::Resource<'_>> {
         vec![bespoke_engine::binding::Resource::Simple(bytes_of(self).to_vec())]
     }
 
