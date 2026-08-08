@@ -1,3 +1,8 @@
+use cgmath::Vector3;
+use itertools::Itertools;
+
+use crate::{blocks::solid_block, chunk::{CHUNK_SIZE, ChunkManager}};
+
 pub struct RingIter {
     max: i32,
     d: i32,
@@ -69,4 +74,37 @@ pub fn neighbors(chunk_pos: [i32; 3]) -> [[i32; 3]; 6] {
         [chunk_pos[0], chunk_pos[1], chunk_pos[2]+1],
         [chunk_pos[0], chunk_pos[1], chunk_pos[2]-1],
     ]
+}
+
+pub fn chunk_for_block_position(block_position: [i32; 3]) -> [i32; 3] {
+    let x = block_position[0];
+    let y = block_position[1];
+    let z = block_position[2];
+    let cx = (x as f32 /CHUNK_SIZE as f32).floor() as i32;
+    let cy = (y as f32 /CHUNK_SIZE as f32).floor() as i32;
+    let cz = (z as f32 /CHUNK_SIZE as f32).floor() as i32;
+    return [cx, cy, cz];
+}
+
+pub fn chunk_for_world_position(world_position: [f32; 3]) -> [i32; 3] {
+    let x = world_position[0];
+    let y = world_position[1];
+    let z = world_position[2];
+    let cx = (x/CHUNK_SIZE as f32).floor() as i32;
+    let cy = (y/CHUNK_SIZE as f32).floor() as i32;
+    let cz = (z/CHUNK_SIZE as f32).floor() as i32;
+    return [cx, cy, cz];
+}
+
+pub fn colliding_world(world: &ChunkManager, center: Vector3<f32>, positive_size: Vector3<f32>, negative_size: Vector3<f32>) -> bool {
+    let point_offsets = vec![];
+    for offset in point_offsets {
+        let position = center+offset;
+        let block_position = position.map(|it| it.floor() as i32).into();
+        let block = world.get_block(block_position);
+        if solid_block(block) {
+            return true;
+        }
+    }
+    return false;
 }

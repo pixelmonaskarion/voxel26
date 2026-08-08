@@ -1,6 +1,5 @@
-t_screen: $0,0;
-s_screen: $0,1;
-
+t_ui: $0,0;
+s_ui: $0,1;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -24,5 +23,5 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(t_screen, s_screen, in.tex_coords);
+    return textureSample(t_ui, s_ui, in.tex_coords);
 }

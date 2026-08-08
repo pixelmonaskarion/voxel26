@@ -1,6 +1,7 @@
 screen_info: $0;
 t_atlas: $1,0;
 s_atlas: $1,1;
+screen_transform: $2;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -14,7 +15,7 @@ fn vs_main(
     model: VoxelVertex,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = screen_info.camera.view_proj * vec4<f32>(model.position.xyz, 1.0);
+    out.clip_position = screen_transform * screen_info.camera.view_proj * vec4<f32>(model.position.xyz, 1.0);
     out.normal = model.normal.xyz;
     out.color = model.color;
     out.transparency = model.position.w;

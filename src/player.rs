@@ -1,22 +1,35 @@
-use cgmath::{Vector3, vec3};
+use bespoke_engine::{binding::UniformBinding, surface_context::SurfaceCtx, texture::Texture};
+use cgmath::{Vector3, vec3, InnerSpace};
 
-use crate::{blocks::solid_block, chunk::ChunkManager};
+use crate::{blocks::{DIRT, GRASS, LEAVES, ROCK, STONE, WATER, solid_block}, chunk::ChunkManager, inventory::{Inventory, InventoryItemStack, Item, ItemAtlas, ItemStack}};
 
 pub struct Player {
     pub position: Vector3<f32>,
     pub velocity: Vector3<f32>,
     pub time_since_ground: f64,
-    pub movement_move: i32,
+    pub movement_mode: i32,
+    pub break_cooldown: i32,
+
+    pub inventory: Inventory,
 }
 
 impl Player {
-    pub fn new(position: Vector3<f32>) -> Self {
-        Self {
+    pub fn new(position: Vector3<f32>, item_atlas: &mut ItemAtlas, block_atlas: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) -> Self {
+        let mut _self = Self {
             position,
             velocity: vec3(0.0, 0.0, 0.0),
             time_since_ground: 1.0,
-            movement_move: 0,
-        }
+            movement_mode: 0,
+            break_cooldown: 0,
+            inventory: Inventory::new(item_atlas, block_atlas, surface_ctx),
+        };
+        _self.inventory.items[0] = InventoryItemStack::new(ItemStack::new(Item::Block(GRASS), 1), item_atlas, block_atlas, surface_ctx);
+        _self.inventory.items[1] = InventoryItemStack::new(ItemStack::new(Item::Block(DIRT), 1), item_atlas, block_atlas, surface_ctx);
+        _self.inventory.items[2] = InventoryItemStack::new(ItemStack::new(Item::Block(STONE), 1), item_atlas, block_atlas, surface_ctx);
+        _self.inventory.items[3] = InventoryItemStack::new(ItemStack::new(Item::Block(WATER), 1), item_atlas, block_atlas, surface_ctx);
+        _self.inventory.items[4] = InventoryItemStack::new(ItemStack::new(Item::Block(LEAVES), 1), item_atlas, block_atlas, surface_ctx);
+        _self.inventory.items[5] = InventoryItemStack::new(ItemStack::new(Item::Block(ROCK), 1), item_atlas, block_atlas, surface_ctx);
+        _self
     }
 
     pub fn move_player(&mut self, delta: Vector3<f32>, world: &ChunkManager) {
@@ -49,25 +62,33 @@ impl Player {
         }
     }
 
+    
+
     pub fn colliding_world(&self, world: &ChunkManager) -> bool {
-        if self.movement_move == 1 {
+        if self.movement_mode == 1 {
             return false;
         }
+        let width = 0.8;
+        let height = 1.8;
+        let half_w = width / 2.0;
+        let top = 0.3;
+        let mid = top - height / 2.0;
+        let bottom = top - height;
         let point_offsets = [
-            vec3(-0.5, 0.5, -0.5),
-            vec3(0.5, 0.5, -0.5),
-            vec3(0.5, 0.5, 0.5),
-            vec3(-0.5, 0.5, 0.5),
+            vec3(-half_w, top, -half_w),
+            vec3(half_w, top, -half_w),
+            vec3(half_w, top, half_w),
+            vec3(-half_w, top, half_w),
 
-            vec3(-0.5, -0.5, -0.5),
-            vec3(0.5, -0.5, -0.5),
-            vec3(0.5, -0.5, 0.5),
-            vec3(-0.5, -0.5, 0.5),
+            vec3(-half_w, mid, -half_w),
+            vec3(half_w, mid, -half_w),
+            vec3(half_w, mid, half_w),
+            vec3(-half_w, mid, half_w),
 
-            vec3(-0.5, -1.5, -0.5),
-            vec3(0.5, -1.5, -0.5),
-            vec3(0.5, -1.5, 0.5),
-            vec3(-0.5, -1.5, 0.5),
+            vec3(-half_w, bottom, -half_w),
+            vec3(half_w, bottom, -half_w),
+            vec3(half_w, bottom, half_w),
+            vec3(-half_w, bottom, half_w),
         ];
         for offset in point_offsets {
             let position = self.position+offset;
@@ -78,5 +99,103 @@ impl Player {
             }
         }
         return false;
+    }
+
+    pub fn raycast(&self, direction: Vector3<f32>, max_distance: f32, world: &ChunkManager) -> Option<([i32;3], BlockFace)> {
+        if direction.magnitude2() == 0.0 {
+            return None;
+        }
+        let dir = direction.normalize();
+        let mut voxel: [i32; 3] = self.position.map(|it| it.floor() as i32).into();
+
+        let step_x = if dir.x > 0.0 { 1 } else if dir.x < 0.0 { -1 } else { 0 };
+        let step_y = if dir.y > 0.0 { 1 } else if dir.y < 0.0 { -1 } else { 0 };
+        let step_z = if dir.z > 0.0 { 1 } else if dir.z < 0.0 { -1 } else { 0 };
+
+        let ox = self.position.x;
+        let oy = self.position.y;
+        let oz = self.position.z;
+
+        let vx = voxel[0] as f32;
+        let vy = voxel[1] as f32;
+        let vz = voxel[2] as f32;
+
+        let (mut t_max_x, t_delta_x) = if step_x != 0 {
+            let next_boundary = if step_x > 0 { vx + 1.0 } else { vx };
+            let t_max = (next_boundary - ox) / dir.x;
+            (t_max, 1.0 / dir.x.abs())
+        } else {
+            (f32::INFINITY, f32::INFINITY)
+        };
+        let (mut t_max_y, t_delta_y) = if step_y != 0 {
+            let next_boundary = if step_y > 0 { vy + 1.0 } else { vy };
+            let t_max = (next_boundary - oy) / dir.y;
+            (t_max, 1.0 / dir.y.abs())
+        } else {
+            (f32::INFINITY, f32::INFINITY)
+        };
+        let (mut t_max_z, t_delta_z) = if step_z != 0 {
+            let next_boundary = if step_z > 0 { vz + 1.0 } else { vz };
+            let t_max = (next_boundary - oz) / dir.z;
+            (t_max, 1.0 / dir.z.abs())
+        } else {
+            (f32::INFINITY, f32::INFINITY)
+        };
+
+        let mut t = 0.0f32;
+        while t <= max_distance {
+            // step to next voxel boundary
+            let hit_face;
+            if t_max_x <= t_max_y && t_max_x <= t_max_z {
+                voxel[0] += step_x;
+                t = t_max_x;
+                t_max_x += t_delta_x;
+                hit_face = Some(if step_x > 0 { BlockFace::West } else { BlockFace::East });
+            } else if t_max_y <= t_max_x && t_max_y <= t_max_z {
+                voxel[1] += step_y;
+                t = t_max_y;
+                t_max_y += t_delta_y;
+                hit_face = Some(if step_y > 0 { BlockFace::Down } else { BlockFace::Up });
+            } else {
+                voxel[2] += step_z;
+                t = t_max_z;
+                t_max_z += t_delta_z;
+                hit_face = Some(if step_z > 0 { BlockFace::North } else { BlockFace::South });
+            }
+
+            if t > max_distance {
+                break;
+            }
+
+            let block_id = world.get_block(voxel);
+            if solid_block(block_id) {
+                return Some((voxel, hit_face.unwrap()));
+            }
+        }
+
+        None
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BlockFace {
+    North,
+    East,
+    South,
+    West,
+    Up,
+    Down,
+}
+
+impl BlockFace {
+    pub fn direction(&self) -> Vector3<i32> {
+        match self {
+            BlockFace::Down => vec3(0, -1, 0),
+            BlockFace::Up => vec3(0, 1, 0),
+            BlockFace::West => vec3(-1, 0, 0),
+            BlockFace::East => vec3(1, 0, 0),
+            BlockFace::South => vec3(0, 0, 1),
+            BlockFace::North => vec3(0, 0, -1),
+        }
     }
 }

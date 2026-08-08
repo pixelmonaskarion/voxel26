@@ -9,6 +9,12 @@ mod blocks;
 mod util;
 mod player;
 mod block_models;
+mod features;
+mod cube_outline;
+mod inventory;
+mod ui;
+mod particles;
+mod entity;
 
 include!(concat!(env!("OUT_DIR"), "/resources.rs"));
 

@@ -1,6 +1,6 @@
-t_screen: $0,0;
-s_screen: $0,1;
-
+t_atlas: $0,0;
+s_atlas: $0,1;
+subsection: $1;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -24,5 +24,7 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(t_screen, s_screen, in.tex_coords);
+    // return textureSample(t_atlas, s_atlas, vec2f(in.tex_coords.x, in.tex_coords.y));
+    // return textureSample(t_atlas, s_atlas, vec2f(in.tex_coords.x, in.tex_coords.y));
+    return textureSample(t_atlas, s_atlas, vec2f(in.tex_coords.x*subsection.z+subsection.x, in.tex_coords.y*subsection.w+subsection.y));
 }

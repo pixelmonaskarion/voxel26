@@ -1,6 +1,9 @@
-use std::{collections::HashMap, sync::{LazyLock, Mutex}};
+use std::{collections::HashMap, hash::Hash, sync::{LazyLock, Mutex}};
 
+use bespoke_engine::{model::Model, surface_context::SurfaceCtx};
 use phf::phf_map;
+
+use crate::block_models::{self, parse_model};
 
 pub type BlockID = u16;
 
@@ -11,6 +14,7 @@ pub const AIR: Block = Block {
     atlas_x: 0,
     atlas_y: 0,
     has_model: false,
+    layer: NOT_RENDERED_LAYER,
 };
 pub const GRASS: Block = Block {
     id: 1,
@@ -19,6 +23,7 @@ pub const GRASS: Block = Block {
     atlas_x: 0,
     atlas_y: 0,
     has_model: false,
+    layer: SOLID_LAYER,
 };
 pub const WATER: Block = Block {
     id: 2,
@@ -27,6 +32,7 @@ pub const WATER: Block = Block {
     atlas_x: 0,
     atlas_y: 15,
     has_model: false,
+    layer: TRANSPARENT_LAYER,
 };
 
 pub const STONE: Block = Block {
@@ -36,6 +42,7 @@ pub const STONE: Block = Block {
     atlas_x: 3,
     atlas_y: 0,
     has_model: false,
+    layer: SOLID_LAYER,
 };
 
 pub const DIRT: Block = Block {
@@ -45,6 +52,27 @@ pub const DIRT: Block = Block {
     atlas_x: 2,
     atlas_y: 0,
     has_model: false,
+    layer: SOLID_LAYER,
+};
+
+pub const ROCK: Block = Block {
+    id: 5,
+    solid: false,
+    color: [0.0, 0.0, 0.0, 1.0],
+    atlas_x: 3,
+    atlas_y: 0,
+    has_model: true,
+    layer: SOLID_LAYER,
+};
+
+pub const LEAVES: Block = Block {
+    id: 6,
+    solid: true,
+    color: [0.0, 0.0, 0.0, 1.0],
+    atlas_x: 4,
+    atlas_y: 1,
+    has_model: false,
+    layer: TRANSPARENT_LAYER,
 };
 
 pub const BLOCKS: phf::Map<BlockID, Block> = phf_map! {
@@ -53,6 +81,8 @@ pub const BLOCKS: phf::Map<BlockID, Block> = phf_map! {
     2 => WATER,
     3 => STONE,
     4 => DIRT,
+    5 => ROCK,
+    6 => LEAVES,
 };
 
 pub const ATLAS_X_BLOCKS: u32 = 16;
@@ -71,20 +101,32 @@ pub struct Block {
     pub color: [f32; 4],
     pub atlas_x: u32,
     pub atlas_y: u32,
-    pub has_model: bool
+    pub has_model: bool,
+    pub layer: i32,
 }
 
-impl Block {
-    pub fn layer(&self) -> i32 {
-        return if self.solid {
-            0
-        } else if self.color[3] > 0.0 {
-            1
-        } else {
-            2
-        }
+impl PartialEq for Block {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        self.id != other.id
     }
 }
+
+impl Hash for Block {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.solid.hash(state);
+        self.atlas_x.hash(state);
+        self.atlas_y.hash(state);
+        self.has_model.hash(state);
+        self.layer.hash(state);
+    }
+}
+
+impl Eq for Block {}
 
 pub fn solid_block(block: BlockID) -> bool {
     get_block(block).solid
@@ -96,5 +138,5 @@ pub const NOT_RENDERED_LAYER: i32 = 2;
 
 pub fn block_layer(block: BlockID) -> i32 {
     let block = get_block(block);
-    return block.layer();
+    return block.layer;
 }
