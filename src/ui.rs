@@ -1,7 +1,7 @@
 use bespoke_engine::{binding::Descriptor, culling::AABB, model::{Model, ToRaw}, surface_context::SurfaceCtx};
 use bytemuck::{NoUninit, bytes_of};
 use cgmath::{Vector2, vec2};
-use wgpu_text::glyph_brush::{HorizontalAlign, Layout, OwnedSection, OwnedText, Section, VerticalAlign};
+use wgpu_text::glyph_brush::{HorizontalAlign, Layout, OwnedSection, OwnedText, VerticalAlign};
 
 use crate::{blocks::{ATLAS_X_BLOCKS, ATLAS_Y_BLOCKS}, inventory::ItemStack};
 

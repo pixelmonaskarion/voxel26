@@ -35,6 +35,7 @@ pub fn index_in_chunk(x: u32, y: u32, z: u32) -> usize {
     (y * CHUNK_SIZE * CHUNK_SIZE + x * CHUNK_SIZE + z) as usize
 }
 
+#[allow(unused)]
 impl Chunk {
     pub fn new() -> Self {
         let mut _self = Self {
@@ -151,7 +152,7 @@ pub struct ChunkManager {
     gen_model_tx: mpsc::Sender<GenerateChunkMeshRequest>,
     gen_model_rx: mpsc::Receiver<GenerateChunkModelResponse>,
 }
-
+#[allow(unused)]
 impl ChunkManager {
     pub fn new(surface_ctx: &dyn SurfaceCtx) -> Self {
         let (gen_blocks_req_tx, gen_blocks_req_rx) = mpsc::channel::<GenerateChunkBlocksRequest>();
@@ -181,7 +182,7 @@ impl ChunkManager {
                     t += SystemTime::now().duration_since(start).unwrap();
                     n += 1;
                     if n % 1000 == 999 {
-                        let avg = t/n;
+                        // let avg = t/n;
                         // println!("avg gen blocks: {avg:?}");
                     }
                     while let Ok(req) = gen_blocks_req_rx.try_recv() {
@@ -211,7 +212,7 @@ impl ChunkManager {
                     t += SystemTime::now().duration_since(start).unwrap();
                     n += 1;
                     if n % 1000 == 999 {
-                        let avg = t/n;
+                        // let avg = t/n;
                         // println!("avg gen mesh: {avg:?}");
                         t = Duration::ZERO;
                         n = 0;
@@ -307,10 +308,10 @@ impl ChunkManager {
     fn generate_blocks_req(req: GenerateChunkBlocksRequest, seed: u32) -> GenerateChunkBlocksResponse {
         let mut blocks = vec![0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize];
         let noises = (0..8).map(|i| Perlin::new(seed+i)).collect::<Vec<_>>();
-        let CHUNK_SIZE1 = CHUNK_SIZE as usize + 1;
-        let mut noise_map = vec![0.0; (CHUNK_SIZE1*CHUNK_SIZE1)*(noises.len()+1)];
-        for x in 0..CHUNK_SIZE1 {
-            for z in 0..CHUNK_SIZE1 {
+        let chunk_size1 = CHUNK_SIZE as usize + 1;
+        let mut noise_map = vec![0.0; (chunk_size1*chunk_size1)*(noises.len()+1)];
+        for x in 0..chunk_size1 {
+            for z in 0..chunk_size1 {
                 let mut position_scale = 2000.0;
                 let mut height_scale = 300.0;
                 let mut height = 0.0;
@@ -325,27 +326,27 @@ impl ChunkManager {
                         noise_map[noise_i] = noise;
                         noise
                     } else {
-                        noise_map[x as usize * CHUNK_SIZE1 * (noises.len()+1) + z as usize * (noises.len()+1) + noise_i]
+                        noise_map[x as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noise_i]
                     };
                     let noise_px = noise.get([(xf64+1.0) / position_scale, (zf64) / position_scale]);
                     if x != CHUNK_SIZE as usize {
-                        noise_map[(x+1) as usize * CHUNK_SIZE1 * (noises.len()+1) + z as usize * (noises.len()+1) + noise_i] = noise_px;
+                        noise_map[(x+1) as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noise_i] = noise_px;
                     }
                     let noise_pz = noise.get([(xf64) / position_scale, (zf64+1.0) / position_scale]);
                     if z != CHUNK_SIZE as usize {
-                        noise_map[x as usize * CHUNK_SIZE1 * (noises.len()+1) + (z+1) as usize * (noises.len()+1) + noise_i] = noise_pz;
+                        noise_map[x as usize * chunk_size1 * (noises.len()+1) + (z+1) as usize * (noises.len()+1) + noise_i] = noise_pz;
                     }
                     noise_gradient += vec2(noise_here-noise_px, noise_here-noise_pz)/position_scale;
                     height += noise_here * height_scale * 1.0/(1.0+noise_gradient.magnitude());
                 }
-                noise_map[x as usize * CHUNK_SIZE1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()] = height;
+                noise_map[x as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()] = height;
             }
         }
         for x in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
-                let height = noise_map[x as usize * CHUNK_SIZE1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()];
-                let height_px = noise_map[(x+1) as usize * CHUNK_SIZE1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()];
-                let height_pz = noise_map[x as usize * CHUNK_SIZE1 * (noises.len()+1) + (z+1) as usize * (noises.len()+1) + noises.len()];
+                let height = noise_map[x as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()];
+                let height_px = noise_map[(x+1) as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()];
+                let height_pz = noise_map[x as usize * chunk_size1 * (noises.len()+1) + (z+1) as usize * (noises.len()+1) + noises.len()];
                 let height_gradient = vec2(height_px-height, height_pz-height);
                 for y in 0..CHUNK_SIZE {
                     let yf64 = y as f64+req.chunk_position[1] as f64 *(CHUNK_SIZE as f64);
@@ -371,7 +372,6 @@ impl ChunkManager {
                 }
             }
         }
-        let CHUNK_SIZEi32 = CHUNK_SIZE as i32;
         fn height_at(x: i32, z: i32, seed: u32) -> f64 {
             let noises = (0..8).map(|i| Perlin::new(seed+i)).collect::<Vec<_>>();
             let mut position_scale = 2000.0;
@@ -397,8 +397,8 @@ impl ChunkManager {
             seed: u32, req: &GenerateChunkBlocksRequest,
             noise_map: &Vec<f64>, noises: &Vec<Perlin>, blocks: &mut Vec<u16>,
         ) {
-            let CHUNK_SIZEi32 = CHUNK_SIZE as i32;
-            let CHUNK_SIZE1 = CHUNK_SIZE as usize + 1;
+            let chunk_sizei32 = CHUNK_SIZE as i32;
+            let chunk_size1 = CHUNK_SIZE as usize + 1;
             for cx in -1..2 {
                 for cy in -1..2 {
                     for cz in -1..2 {
@@ -412,20 +412,20 @@ impl ChunkManager {
                             if rand.random_range(0.0..1.0) > chance {
                                 continue;
                             }
-                            let x = rand.random_range(0..CHUNK_SIZEi32)+cx*CHUNK_SIZEi32;
-                            let z = rand.random_range(0..CHUNK_SIZEi32)+cz*CHUNK_SIZEi32;
-                            let height = if x >= 0 && x < CHUNK_SIZEi32 && z >= 0 && z < CHUNK_SIZEi32 {
-                                noise_map[x as usize * CHUNK_SIZE1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()]
+                            let x = rand.random_range(0..chunk_sizei32)+cx*chunk_sizei32;
+                            let z = rand.random_range(0..chunk_sizei32)+cz*chunk_sizei32;
+                            let height = if x >= 0 && x < chunk_sizei32 && z >= 0 && z < chunk_sizei32 {
+                                noise_map[x as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()]
                             } else {
-                                height_at(x+req.chunk_position[0]*CHUNK_SIZEi32, z+req.chunk_position[2]*CHUNK_SIZEi32, seed)
+                                height_at(x+req.chunk_position[0]*chunk_sizei32, z+req.chunk_position[2]*chunk_sizei32, seed)
                             };
                             if height < 0.0 {
                                 continue;
                             }
-                            if height as i32 + 1 >= (req.chunk_position[1]+cy)*CHUNK_SIZEi32 && height as i32 + 1 < (req.chunk_position[1]+cy+1)*CHUNK_SIZEi32 {
-                                let y = height as i32 + 1 - (req.chunk_position[1])*CHUNK_SIZEi32;
+                            if height as i32 + 1 >= (req.chunk_position[1]+cy)*chunk_sizei32 && height as i32 + 1 < (req.chunk_position[1]+cy+1)*chunk_sizei32 {
+                                let y = height as i32 + 1 - (req.chunk_position[1])*chunk_sizei32;
                                 feature.place(x, y, z, &mut rand.fork(), |x: i32, y: i32, z: i32, block_id| {
-                                    if x >= 0 && x < CHUNK_SIZEi32 && y >= 0 && y < CHUNK_SIZEi32 && z >= 0 && z < CHUNK_SIZEi32 {
+                                    if x >= 0 && x < chunk_sizei32 && y >= 0 && y < chunk_sizei32 && z >= 0 && z < chunk_sizei32 {
                                         blocks[index_in_chunk(x as u32, y as u32, z as u32)] = block_id;
                                     }
                                 });
@@ -453,9 +453,9 @@ impl ChunkManager {
         }
         let lod = 2i32.pow((Vector3::<i32>::from(req.chunk_position).cast::<f32>().unwrap().mul(CHUNK_SIZE as f32).distance2(Vector3::<f32>::from(req.player_position))/500.0f32.powi(2).floor()) as u32).min(4).max(1);
         fn get_block(x: i32, y: i32, z: i32, req: &GenerateChunkMeshRequest, lod: i32) -> BlockID {
-            let CHUNK_SIZEf32 = CHUNK_SIZE as f32;
-            let CHUNK_SIZEi32 = CHUNK_SIZE as i32;
-            if x >= 0 && y >= 0 && z >= 0 && x < CHUNK_SIZEi32 && y < CHUNK_SIZEi32 && z < CHUNK_SIZEi32 {
+            let chunk_sizef32 = CHUNK_SIZE as f32;
+            let chunk_sizei32 = CHUNK_SIZE as i32;
+            if x >= 0 && y >= 0 && z >= 0 && x < chunk_sizei32 && y < chunk_sizei32 && z < chunk_sizei32 {
                 if lod == 1 {
                     return req.chunk_blocks[index_in_chunk(x as u32, y as u32, z as u32)];
                 } else {
@@ -465,12 +465,12 @@ impl ChunkManager {
                     return req.chunk_blocks[index_in_chunk(lx as u32, ly as u32, lz as u32)];
                 }
             } else {
-                let cx = (x as f32 /CHUNK_SIZEf32).floor() as i32;
-                let cy = (y as f32 /CHUNK_SIZEf32).floor() as i32;
-                let cz = (z as f32 /CHUNK_SIZEf32).floor() as i32;
-                let bx = x.rem_euclid(CHUNK_SIZEi32);
-                let by = y.rem_euclid(CHUNK_SIZEi32);
-                let bz = z.rem_euclid(CHUNK_SIZEi32);
+                let cx = (x as f32 /chunk_sizef32).floor() as i32;
+                let cy = (y as f32 /chunk_sizef32).floor() as i32;
+                let cz = (z as f32 /chunk_sizef32).floor() as i32;
+                let bx = x.rem_euclid(chunk_sizei32);
+                let by = y.rem_euclid(chunk_sizei32);
+                let bz = z.rem_euclid(chunk_sizei32);
                 let blocks = match [cx, cy, cz] {
                     [1, 0, 0] => Some(&req.cpx),
                     [-1, 0, 0] => Some(&req.cnx),
@@ -533,7 +533,7 @@ impl ChunkManager {
             let num_indices = modeled_indices.len();
             modeled_indices.extend(model.indices.iter().map(|it| *it+num_indices as u32));
         }
-        let CHUNK_SIZEi32 = CHUNK_SIZE as i32;
+        let chunk_sizei32 = CHUNK_SIZE as i32;
         for direction in [-1, 1] {
             for dim in 0..3 {
                 let mut slice_direction = [0; 3];
@@ -541,10 +541,10 @@ impl ChunkManager {
                 let u = (dim+1)%3;
                 let v = (dim+2)%3;
                 let mut pos = [0; 3];
-                for slice in 0..CHUNK_SIZEi32 {
+                for slice in 0..chunk_sizei32 {
                     let mut mask_i = 0;
-                    for x in 0..CHUNK_SIZEi32 {
-                        for y in 0..CHUNK_SIZEi32 {
+                    for x in 0..chunk_sizei32 {
+                        for y in 0..chunk_sizei32 {
                             pos[dim] = slice;
                             pos[u] = x;
                             pos[v] = y;
@@ -763,17 +763,17 @@ impl ChunkManager {
 
                     let mut x = 0;
                     let mut y = 0;
-                    while x < CHUNK_SIZEi32 {
-                        while y < CHUNK_SIZEi32 {
+                    while x < chunk_sizei32 {
+                        while y < chunk_sizei32 {
                             let block = mask[mask_index(x, y)];
                             let mut h = 0;
                             let mut w = lod;
                             if block.layer != NOT_RENDERED_LAYER {
-                                while y+h < CHUNK_SIZEi32 && mask[mask_index(x, y+h)].id == block.id {
+                                while y+h < chunk_sizei32 && mask[mask_index(x, y+h)].id == block.id {
                                     h += lod;
                                 }
                                 'width: loop {
-                                    if x+w >= CHUNK_SIZEi32 {
+                                    if x+w >= chunk_sizei32 {
                                         break;
                                     }
                                     for i in (0..h).step_by(lod as usize) {
@@ -792,7 +792,7 @@ impl ChunkManager {
                             }
                             y += lod;
                         }
-                        if y >= CHUNK_SIZEi32 {
+                        if y >= chunk_sizei32 {
                             y = 0;
                             x += lod;
                         }

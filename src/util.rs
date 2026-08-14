@@ -1,5 +1,4 @@
 use cgmath::Vector3;
-use itertools::Itertools;
 
 use crate::{blocks::solid_block, chunk::{CHUNK_SIZE, ChunkManager}};
 

@@ -158,6 +158,7 @@ struct ModelDefinition {
 struct ModelElement {
     from: [i32; 3],
     to: [i32; 3],
+    #[allow(unused)]
     rotation: ModelRotation,
     faces: ModelFaces,
 }
@@ -175,10 +176,12 @@ struct ModelFaces {
 #[derive(Deserialize)]
 struct ModelFace {
     uv: [i32; 4],
+    #[allow(unused)]
     texture: String,
 }
 
 #[derive(Deserialize)]
+#[allow(unused)]
 struct ModelRotation {
     angle: f32,
     axis: String,
