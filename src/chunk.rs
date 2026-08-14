@@ -557,7 +557,7 @@ impl ChunkManager {
 
                             let block_there = get_block_cached(get_block(pos[0]+slice_direction[0], pos[1]+slice_direction[1], pos[2]+slice_direction[2], &req, lod), &mut block_cache);
 
-                            mask[mask_i] = if block_here.id != block_there.id && (block_here.layer < block_there.layer || block_there.has_model) {
+                            mask[mask_i] = if ((block_here.id != block_there.id) && (block_here.layer < block_there.layer || block_there.has_model)) || !block_here.cull || !block_there.cull {
                                 block_here
                             } else {
                                 AIR

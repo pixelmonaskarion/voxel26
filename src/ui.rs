@@ -253,3 +253,36 @@ pub fn text_sections_for_inventory<'a>(surface_ctx: &dyn SurfaceCtx, item_at: &'
     }
     sections
 }
+
+pub fn mouse_tile_coords(mouse_coords: Vector2<f32>, surface_ctx: &dyn SurfaceCtx, inventory: &OpenInventory) -> Option<usize> {
+    let screen_coords = vec2(mouse_coords.x*2.0 - 1.0, -mouse_coords.y*2.0 + 1.0);
+    let aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
+    let margins = inventory_margins(inventory);
+    let (margin_width, margin_height) = if surface_ctx.config().width > surface_ctx.config().height {
+        (margins / aspect_ratio, margins)
+    } else {
+        (margins, margins * aspect_ratio)
+    };
+    let (num_rows, num_cols) = inventory_size(inventory);
+    let (tile_width, tile_height) = if num_rows > num_cols {
+        let height = (2.0-margin_height*2.0)/num_rows as f32;
+        (height / aspect_ratio, height)
+    } else {
+        let width = (2.0-margin_width*2.0)/num_cols as f32;
+        (width, width * aspect_ratio)
+    };
+    let total_width = num_cols as f32 * tile_width;
+    let total_height = num_rows as f32 * tile_height;
+    for y in 0..num_rows {
+        for x in 0..num_cols {
+            let start = vec2(tile_width * x as f32, tile_height * y as f32);
+            let end = vec2(tile_width * x as f32 + tile_width, tile_height * y as f32 + tile_height);
+            let start = vec2(start.x-total_width/2.0, -start.y+total_height/2.0);
+            let end = vec2(end.x-total_width/2.0, -end.y+total_height/2.0);
+            if screen_coords.x >= start.x && screen_coords.x < end.x && screen_coords.y < start.y && screen_coords.y >= end.y {
+                return Some((y * num_cols + x) as usize);
+            }
+        }
+    }
+    None
+}

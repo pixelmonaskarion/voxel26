@@ -12,6 +12,7 @@ pub const AIR: Block = Block {
     atlas_y: 0,
     has_model: false,
     layer: NOT_RENDERED_LAYER,
+    cull: true,
 };
 pub const GRASS: Block = Block {
     id: 1,
@@ -21,6 +22,7 @@ pub const GRASS: Block = Block {
     atlas_y: 0,
     has_model: false,
     layer: SOLID_LAYER,
+    cull: true,
 };
 pub const WATER: Block = Block {
     id: 2,
@@ -30,6 +32,7 @@ pub const WATER: Block = Block {
     atlas_y: 15,
     has_model: false,
     layer: TRANSPARENT_LAYER,
+    cull: true,
 };
 
 pub const STONE: Block = Block {
@@ -40,6 +43,7 @@ pub const STONE: Block = Block {
     atlas_y: 0,
     has_model: false,
     layer: SOLID_LAYER,
+    cull: true,
 };
 
 pub const DIRT: Block = Block {
@@ -50,6 +54,7 @@ pub const DIRT: Block = Block {
     atlas_y: 0,
     has_model: false,
     layer: SOLID_LAYER,
+    cull: true,
 };
 
 pub const GOLD: Block = Block {
@@ -60,6 +65,7 @@ pub const GOLD: Block = Block {
     atlas_y: 2,
     has_model: false,
     layer: SOLID_LAYER,
+    cull: true,
 };
 
 pub const ROCK: Block = Block {
@@ -70,6 +76,7 @@ pub const ROCK: Block = Block {
     atlas_y: 0,
     has_model: true,
     layer: SOLID_LAYER,
+    cull: true,
 };
 
 pub const LEAVES: Block = Block {
@@ -79,7 +86,8 @@ pub const LEAVES: Block = Block {
     atlas_x: 4,
     atlas_y: 1,
     has_model: false,
-    layer: TRANSPARENT_LAYER,
+    layer: SOLID_LAYER,
+    cull: false,
 };
 
 pub const BLOCKS: phf::Map<BlockID, Block> = phf_map! {
@@ -111,6 +119,7 @@ pub struct Block {
     pub atlas_y: u32,
     pub has_model: bool,
     pub layer: i32,
+    pub cull: bool,
 }
 
 impl Hash for Block {

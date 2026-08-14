@@ -30,6 +30,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     //fract
     //1.whole+3
     var output = textureSample(t_atlas, s_atlas, fix_repeats(in.color));
+    if output.w == 0.0 {
+        discard;
+    }
     let lighting = lighting(in.normal);
     output = vec4f(output.xyz*lighting, output.w*in.transparency);
     return output;

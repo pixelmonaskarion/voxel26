@@ -1,22 +1,24 @@
 use std::{collections::HashMap, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, model::{Model, Render, ToRaw}, resource_loader::{load_resource, load_resource_string}, shader::{Shader, ShaderConfig, ShaderType}, surface_context::SurfaceCtx, texture::Texture, window::{WindowConfig, WindowHandler}};
+use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::{load_resource, load_resource_string}, shader::{Shader, ShaderConfig, ShaderType}, surface_context::SurfaceCtx, texture::Texture, window::{WindowConfig, WindowHandler}};
 use bytemuck::{bytes_of, NoUninit};
-use cgmath::{InnerSpace, MetricSpace, Vector2, Vector3, Zero, vec3};
+use cgmath::{InnerSpace, MetricSpace, Vector2, Vector3, Zero, vec2, vec3};
 use wgpu::{Color, Features, Limits, RenderPass};
 use wgpu_text::{BrushBuilder, TextBrush, glyph_brush::{Layout, OwnedSection, OwnedText, ab_glyph::FontVec}};
 use winit::{dpi::PhysicalPosition, event::{KeyEvent, Modifiers, MouseButton, TouchPhase, WindowEvent}, keyboard::{KeyCode, PhysicalKey::Code}};
-use crate::{RESOURCES, blocks::{AIR, get_block}, chunk::{CHUNK_SIZE, ChunkManager}, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, inventory::{InventoryItemStack, Item, ItemAtlas, ItemStack}, particles::{Particle, ParticleManager, ParticleType}, player::Player, ui::{InventoryModel, OpenInventory, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, text_sections_for_inventory}, util::{self, chunk_for_block_position, chunk_for_world_position}};
+use crate::{RESOURCES, blocks::{AIR, ATLAS_X_BLOCKS, ATLAS_Y_BLOCKS, get_block}, chunk::{CHUNK_SIZE, ChunkManager}, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, inventory::{InventoryItemStack, Item, ItemAtlas, ItemStack}, particles::{Particle, ParticleManager, ParticleType}, player::Player, ui::{InventoryModel, OpenInventory, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, mouse_tile_coords, text_sections_for_inventory}, util::{self, chunk_for_block_position, chunk_for_world_position}};
 
 pub struct Game<'a> {
     camera: Camera,
     player: Player,
     screen_size: [f32; 2],
+    mouse_coords: Vector2<f32>,
     screen_info_binding: UniformBinding<ScreenInfo>,
     start_time: u128,
     keys_down: Vec<KeyCode>,
     new_keys_down: Vec<KeyCode>,
     mouse_down: Vec<MouseButton>,
+    new_mouse_down: Vec<MouseButton>,
     touch_positions: HashMap<u64, PhysicalPosition<f64>>,
     moving_bc_finger: Option<u64>,
     post_processing_shader: Shader<'a>,
@@ -43,6 +45,9 @@ pub struct Game<'a> {
     open_inventory: Option<OpenInventory>,
     open_inventory_model: Option<InventoryModel>,
     open_inventory_item_subsections_uniform: Option<UniformBinding<DynamicOffsetUniformVec<[f32; 4]>>>,
+    cursor_stack: InventoryItemStack,
+    cursor_stack_model: Model,
+    cursor_stack_subsection_uniform: UniformBinding<DynamicOffsetUniform<[f32; 4], 1>>,
 }
 
 #[repr(C)]
@@ -132,15 +137,21 @@ impl <'a> Game<'a> {
         let entity_render_manager = EntityRenderManager::new(surface_ctx);
         let mut item_atlas = ItemAtlas::new(surface_ctx, &atlas_uniform);
         let text_brush = BrushBuilder::using_font(FontVec::try_from_vec(load_resource("res/unifont.ttf").unwrap()).unwrap()).build(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, surface_ctx.config().format);
+
+        let cursor_stack = InventoryItemStack::new(ItemStack::new(Item::Block(AIR), 0), &mut item_atlas, &atlas_uniform, surface_ctx);
+        let cursor_stack_model = Model::new_empty::<u16>(AABB::zero(), surface_ctx.device());
+        let cursor_stack_subsection_uniform = UniformBinding::new(surface_ctx.device(), "Cursor Stack Subsection", DynamicOffsetUniform { values: [[0.0; 4]], alignment: surface_ctx.device().limits().min_uniform_buffer_offset_alignment as usize }, None);
         Self {
             camera,
             player: Player::new(vec3(0.0, 10.0, 0.0), &mut item_atlas, &atlas_uniform, surface_ctx),
             screen_size,
+            mouse_coords: vec2(0.0, 0.0),
             screen_info_binding,
             start_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
             keys_down: vec![],
             new_keys_down: vec![],
             mouse_down: vec![],
+            new_mouse_down: vec![],
             touch_positions: HashMap::new(),
             moving_bc_finger: None,
             post_processing_shader,
@@ -164,6 +175,9 @@ impl <'a> Game<'a> {
             open_inventory: None,
             open_inventory_model: None,
             open_inventory_item_subsections_uniform: None,
+            cursor_stack,
+            cursor_stack_model,
+            cursor_stack_subsection_uniform,
         }
     }
 }
@@ -234,7 +248,7 @@ impl <'s> WindowHandler for Game<'s> {
         }
         if self.open_inventory.is_none() {
             if self.mouse_down.contains(&MouseButton::Right) {
-                if self.player.break_cooldown == 0 {
+                if self.player.break_cooldown == 0 || self.new_mouse_down.contains(&MouseButton::Right) {
                     if let Some((coordinate, face)) = self.player.raycast(self.camera.get_forward_vec(), 6.0, &self.chunk_manager) {
                         #[allow(irrefutable_let_patterns)]
                         if let Item::Block(block) = self.player.inventory.selected_item().stack.item && block != AIR {
@@ -251,7 +265,7 @@ impl <'s> WindowHandler for Game<'s> {
                 }
             }
             if self.mouse_down.contains(&MouseButton::Left) {
-                if self.player.break_cooldown == 0 {
+                if self.player.break_cooldown == 0 || self.new_mouse_down.contains(&MouseButton::Left) {
                     if let Some((coordinate, _)) = self.player.raycast(self.camera.get_forward_vec(), 6.0, &self.chunk_manager) {
                         let before = self.chunk_manager.get_block(coordinate);
                         self.chunk_manager.set_block(coordinate, AIR.id);
@@ -309,6 +323,16 @@ impl <'s> WindowHandler for Game<'s> {
                 self.open_inventory = Some(OpenInventory::PlayerInventory);
                 self.open_inventory_model = Some(create_inventory_model(surface_ctx, &OpenInventory::PlayerInventory));
                 unlock_mouse(surface_ctx);
+            }
+        }
+        if self.new_mouse_down.contains(&MouseButton::Left) {
+            if let Some(open_inventory) = &self.open_inventory {
+                if let Some(index) = mouse_tile_coords(vec2(self.mouse_coords.x/surface_ctx.config().width as f32, self.mouse_coords.y/surface_ctx.config().height as f32), surface_ctx, open_inventory) {
+                    let inventory = match open_inventory {
+                        OpenInventory::PlayerInventory => &mut self.player.inventory.items
+                    };
+                    std::mem::swap(&mut self.cursor_stack, &mut inventory[index]);
+                }
             }
         }
 
@@ -385,15 +409,6 @@ impl <'s> WindowHandler for Game<'s> {
             self.item_atlas.subsection_for_position(item.atlas_coordinates)
         }).collect::<Vec<[f32; 4]>>().try_into().unwrap();
         self.hotbar_atlas_subsections_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: hotbar_atlas_subsections, alignment: self.hotbar_atlas_subsections_uniform.value.alignment });
-        let hotbar_item_texts = self.player.inventory.items.iter().flat_map(|item| {
-            if item.stack.count > 1 {
-                Some(OwnedText::new(format!("{}", item.stack.count))
-                    .with_scale(surface_ctx.config().height as f32 * hotbar_item_height()/4.0)
-                    .with_color([1.0; 4]))
-            } else {
-                None
-            }
-        }).collect::<Vec<_>>();
         if let Some(open_inventory) = &self.open_inventory {
             let values = match open_inventory {
                 OpenInventory::PlayerInventory => {
@@ -412,21 +427,40 @@ impl <'s> WindowHandler for Game<'s> {
                 }
              }, open_inventory));
         }
-        let screen_aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
-        text_sections.extend_from_slice(&hotbar_item_texts.into_iter().enumerate().map(|(i, it)| {
-            OwnedSection::default()
-                .add_text(it)
-                .with_bounds((surface_ctx.config().width as f32 * hotbar_item_height()/screen_aspect_ratio, surface_ctx.config().height as f32 * hotbar_item_height()))
-                .with_screen_position(((((i as f32 - 3.5 - 1.0/8.0) * hotbar_item_height()/screen_aspect_ratio)/2.0 + 0.5) * surface_ctx.config().width as f32, (1.0 - hotbar_item_height()/32.0)*surface_ctx.config().height as f32))
-                .with_layout(Layout::default().h_align(wgpu_text::glyph_brush::HorizontalAlign::Right).v_align(wgpu_text::glyph_brush::VerticalAlign::Bottom))
 
-        }).collect::<Vec<_>>());
+        let screen_aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
+        let hotbar_item_text_sections = self.player.inventory.items.iter().enumerate().flat_map(|(i, item)| {
+            if item.stack.count > 1 {
+                Some(
+                OwnedSection::default()
+                    .add_text(OwnedText::new(format!("{}", item.stack.count))
+                    .with_scale(surface_ctx.config().height as f32 * hotbar_item_height()/4.0)
+                    .with_color([1.0; 4]))
+                    .with_bounds((surface_ctx.config().width as f32 * hotbar_item_height()/screen_aspect_ratio, surface_ctx.config().height as f32 * hotbar_item_height()))
+                    .with_screen_position(((((i as f32 - 3.5 - 1.0/8.0) * hotbar_item_height()/screen_aspect_ratio)/2.0 + 0.5) * surface_ctx.config().width as f32, (1.0 - hotbar_item_height()/32.0)*surface_ctx.config().height as f32))
+                    .with_layout(Layout::default().h_align(wgpu_text::glyph_brush::HorizontalAlign::Right).v_align(wgpu_text::glyph_brush::VerticalAlign::Bottom)))
+            } else {
+                None
+            }
+        }).collect::<Vec<_>>();
+        text_sections.extend_from_slice(&hotbar_item_text_sections);
 
         self.health_ui_models = generate_health_ui_models(surface_ctx, self.player.health);
+
+        let cursor_stack_size = 0.1;
+        let cursor_screen_position = vec2((self.mouse_coords.x/surface_ctx.config().width as f32 - 0.5)*2.0, (-self.mouse_coords.y/surface_ctx.config().height as f32 + 0.5)*2.0);
+        self.cursor_stack_model = Model::new(vec![
+            UIVertex { position: [cursor_screen_position.x, cursor_screen_position.y, 0.0], tex_coords: [0.0, 1.0], repeat_count: [1.0, 1.0] },
+            UIVertex { position: [cursor_screen_position.x, cursor_screen_position.y+cursor_stack_size, 0.0], tex_coords: [0.0, 0.0], repeat_count: [1.0, 1.0] },
+            UIVertex { position: [cursor_screen_position.x+cursor_stack_size, cursor_screen_position.y, 0.0], tex_coords: [1.0, 1.0], repeat_count: [1.0, 1.0] },
+            UIVertex { position: [cursor_screen_position.x+cursor_stack_size, cursor_screen_position.y+cursor_stack_size, 0.0], tex_coords: [1.0, 0.0], repeat_count: [1.0, 1.0] },
+        ], &[0_u16, 2, 1, 2, 3, 1], AABB::zero(), surface_ctx.device());
+        self.cursor_stack_subsection_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: [self.item_atlas.subsection_for_position(self.cursor_stack.atlas_coordinates)], alignment: self.cursor_stack_subsection_uniform.value.alignment });
 
         //clean up
         self.text_brush.queue(surface_ctx.device(), surface_ctx.queue(), &text_sections).unwrap();
         self.new_keys_down = vec![];
+        self.new_mouse_down = vec![];
     }
 
     fn render<'a: 'b, 'b>(&'a mut self, surface_ctx: &'b dyn SurfaceCtx, render_pass: &mut RenderPass<'b>) {
@@ -452,14 +486,17 @@ impl <'s> WindowHandler for Game<'s> {
         Some(WindowConfig { background_color: Color { r: 36.0/255.0, g: 105.0/255.0, b: 245.0/255.0, a: 1.0}, enable_post_processing: true })
     }
 
-    fn mouse_moved(&mut self, _surface_ctx: &dyn SurfaceCtx, _mouse_pos: PhysicalPosition<f64>) {
-
+    fn mouse_moved(&mut self, _surface_ctx: &dyn SurfaceCtx, mouse_pos: PhysicalPosition<f64>) {
+        self.mouse_coords = vec2(mouse_pos.x as f32, mouse_pos.y as f32);
     }
 
     fn mouse_input(&mut self, _surface_context: &dyn SurfaceCtx, element_state: &winit::event::ElementState, mouse_button: &winit::event::MouseButton) {
         if element_state.is_pressed() {
             if !self.mouse_down.contains(mouse_button) {
                 self.mouse_down.push(*mouse_button);
+            }
+            if !self.new_mouse_down.contains(mouse_button) {
+                self.new_mouse_down.push(*mouse_button);
             }
         } else {
             if let Some(i) = self.mouse_down.iter().position(|x| x == mouse_button) {
@@ -494,6 +531,7 @@ impl <'s> WindowHandler for Game<'s> {
             self.camera.sky -= (delta.1 / 500.0) as f32;
             self.camera.sky = self.camera.sky.clamp(std::f32::consts::PI*-0.499, std::f32::consts::PI*0.499);
         }
+        self.mouse_coords += vec2(delta.0 as f32, delta.1 as f32);
     }
     
     fn touch(&mut self, surface_ctx: &dyn SurfaceCtx, touch: &winit::event::Touch) {
@@ -550,6 +588,12 @@ impl <'s> WindowHandler for Game<'s> {
                 item.render(render_pass);
             }
         }
+        if self.cursor_stack.stack.count > 0 {
+            self.item_ui_shader.bind(render_pass);
+            render_pass.set_bind_group(0, &self.item_atlas.texture.binding, &[]);
+            render_pass.set_bind_group(1, &self.cursor_stack_subsection_uniform.binding, &[0]);
+            self.cursor_stack_model.render(render_pass);
+        }
 
         self.text_brush.draw(render_pass);
     }
@@ -564,15 +608,17 @@ impl <'s> WindowHandler for Game<'s> {
     fn other_window_event(&mut self, surface_context: &dyn SurfaceCtx, event: &winit::event::WindowEvent) {
         match event {
             WindowEvent::CursorEntered { .. } => {
-                if surface_context.window().has_focus() {
+                if surface_context.window().has_focus() && self.open_inventory.is_none() {
                     lock_mouse(surface_context);
                 }
             },
             WindowEvent::Focused(focused) => {
-                if *focused {
-                    lock_mouse(surface_context);
-                } else {
-                    unlock_mouse(surface_context);
+                if self.open_inventory.is_none() {
+                    if *focused {
+                        lock_mouse(surface_context);
+                    } else {
+                        unlock_mouse(surface_context);
+                    }
                 }
             }
             _ => {}

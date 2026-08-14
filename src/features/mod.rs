@@ -8,9 +8,3 @@ pub mod bush;
 pub trait Feature {
     fn place(&self, x: i32, y: i32, z: i32, rand: &mut dyn Rng, set_block: impl FnMut(i32, i32, i32, BlockID));
 }
-
-pub struct ConfiguredFeature<F: Feature> {
-    pub feature: F,
-    pub attempts: usize,
-    pub chance: f32,
-}
