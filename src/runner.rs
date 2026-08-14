@@ -1,6 +1,6 @@
 use bespoke_engine::{surface_context::SurfaceCtx, window::Surface};
 use futures::executor::block_on;
-use winit::{dpi::{LogicalPosition, PhysicalPosition}, event_loop::EventLoop};
+use winit::{dpi::PhysicalPosition, event_loop::EventLoop};
 
 use crate::game::Game;
 

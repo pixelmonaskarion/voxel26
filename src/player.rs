@@ -1,16 +1,19 @@
+use std::time::Duration;
+
 use bespoke_engine::{binding::UniformBinding, surface_context::SurfaceCtx, texture::Texture};
 use cgmath::{Vector3, vec3, InnerSpace};
 
-use crate::{blocks::{DIRT, GRASS, LEAVES, ROCK, STONE, WATER, solid_block}, chunk::ChunkManager, inventory::{Inventory, InventoryItemStack, Item, ItemAtlas, ItemStack}};
+use crate::{blocks::solid_block, chunk::ChunkManager, inventory::{Inventory, ItemAtlas}};
 
 pub struct Player {
     pub position: Vector3<f32>,
     pub velocity: Vector3<f32>,
-    pub time_since_ground: f64,
+    pub time_since_ground: Duration,
     pub movement_mode: i32,
     pub break_cooldown: i32,
 
     pub inventory: Inventory,
+    pub health: f32,
 }
 
 impl Player {
@@ -18,17 +21,12 @@ impl Player {
         let mut _self = Self {
             position,
             velocity: vec3(0.0, 0.0, 0.0),
-            time_since_ground: 1.0,
+            time_since_ground: Duration::new(2, 0),
             movement_mode: 0,
             break_cooldown: 0,
             inventory: Inventory::new(item_atlas, block_atlas, surface_ctx),
+            health: 20.0,
         };
-        _self.inventory.items[0] = InventoryItemStack::new(ItemStack::new(Item::Block(GRASS), 1), item_atlas, block_atlas, surface_ctx);
-        _self.inventory.items[1] = InventoryItemStack::new(ItemStack::new(Item::Block(DIRT), 1), item_atlas, block_atlas, surface_ctx);
-        _self.inventory.items[2] = InventoryItemStack::new(ItemStack::new(Item::Block(STONE), 1), item_atlas, block_atlas, surface_ctx);
-        _self.inventory.items[3] = InventoryItemStack::new(ItemStack::new(Item::Block(WATER), 1), item_atlas, block_atlas, surface_ctx);
-        _self.inventory.items[4] = InventoryItemStack::new(ItemStack::new(Item::Block(LEAVES), 1), item_atlas, block_atlas, surface_ctx);
-        _self.inventory.items[5] = InventoryItemStack::new(ItemStack::new(Item::Block(ROCK), 1), item_atlas, block_atlas, surface_ctx);
         _self
     }
 
@@ -56,13 +54,15 @@ impl Player {
                 self.position.y -= delta.y/y_steps;
                 self.velocity.y = 0.0;
                 if delta.y < 0.0 {
-                    self.time_since_ground = 0.0;
+                    self.time_since_ground = Duration::ZERO;
                 }
             }
         }
     }
 
-    
+    pub fn damage(&mut self, damage: f32) {
+        self.health -= damage;
+    }
 
     pub fn colliding_world(&self, world: &ChunkManager) -> bool {
         if self.movement_mode == 1 {

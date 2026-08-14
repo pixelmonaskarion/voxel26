@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use bespoke_engine::{binding::{Binding, Descriptor, create_layout}, culling::AABB, model::{Model, ToRaw}, shader::{Shader, ShaderConfig}, surface_context::SurfaceCtx, texture::Texture, window::BasicVertex};
 use bytemuck::bytes_of;
-use cgmath::Vector3;
+use cgmath::{Vector3, vec3};
 use wgpu::{Buffer, BufferUsages, wgt::BufferDescriptor};
 
-use crate::{chunk::ChunkManager, game::ScreenInfo, inventory::{InventoryItemStack, ItemAtlas}};
+use crate::{chunk::ChunkManager, game::ScreenInfo, inventory::{InventoryItemStack, ItemAtlas}, util};
 
 pub struct Entity {
     pub position: Vector3<f32>,
@@ -25,8 +27,39 @@ impl Entity {
         }
     }
 
-    pub fn update(&mut self, world: &ChunkManager, delta_time: f64) {
-        self.position += self.velocity * delta_time as f32;
+    pub fn update(&mut self, world: &ChunkManager, delta_time: Duration) {
+        self.velocity.x *= 0.9;
+        self.velocity.z *= 0.9;
+        self.velocity -= vec3(0.0, 20.0 * delta_time.as_secs_f32(), 0.0);
+        let delta = self.velocity * delta_time.as_secs_f32();
+        let x_steps = (delta.x.abs()/0.5).ceil();
+        let colliding = |position: Vector3<f32>| -> bool {
+            util::colliding_world(world, position, vec3(0.15, 0.15, 0.15), vec3(-0.15, -0.15, -0.15))
+        };
+        for _ in 0..x_steps as i32 {
+            self.position.x += delta.x/x_steps;
+            if colliding(self.position) {
+                self.position.x -= delta.x/x_steps;
+                self.velocity.x = 0.0;
+            }
+        }
+        let z_steps = (delta.z.abs()/0.5).ceil();
+        for _ in 0..z_steps as i32 {
+            self.position.z += delta.z/z_steps;
+            if colliding(self.position) {
+                self.position.z -= delta.z/z_steps;
+                self.velocity.z = 0.0;
+            }
+        }
+        let y_steps = (delta.y.abs()/0.5).ceil();
+        for _ in 0..y_steps as i32 {
+            self.position.y += delta.y/y_steps;
+            if colliding(self.position) {
+                self.position.y -= delta.y/y_steps;
+                self.velocity.y = 0.0;
+            }
+        }
+
     }
 
     pub fn shader_instance(&self, item_atlas: &ItemAtlas) -> Option<Vec<u8>> {

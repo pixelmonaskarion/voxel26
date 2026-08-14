@@ -97,13 +97,25 @@ pub fn chunk_for_world_position(world_position: [f32; 3]) -> [i32; 3] {
 }
 
 pub fn colliding_world(world: &ChunkManager, center: Vector3<f32>, positive_size: Vector3<f32>, negative_size: Vector3<f32>) -> bool {
-    let point_offsets = vec![];
-    for offset in point_offsets {
-        let position = center+offset;
-        let block_position = position.map(|it| it.floor() as i32).into();
-        let block = world.get_block(block_position);
-        if solid_block(block) {
-            return true;
+    let min_world = center + negative_size;
+    let max_world = center + positive_size;
+
+    let min_block_x = min_world.x.floor() as i32;
+    let max_block_x = max_world.x.floor() as i32;
+    let min_block_y = min_world.y.floor() as i32;
+    let max_block_y = max_world.y.floor() as i32;
+    let min_block_z = min_world.z.floor() as i32;
+    let max_block_z = max_world.z.floor() as i32;
+
+    for bx in min_block_x..=max_block_x {
+        for by in min_block_y..=max_block_y {
+            for bz in min_block_z..=max_block_z {
+                let block_position = [bx, by, bz];
+                let block = world.get_block(block_position);
+                if solid_block(block) {
+                    return true;
+                }
+            }
         }
     }
     return false;

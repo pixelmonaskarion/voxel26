@@ -7,10 +7,11 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, RenderPass};
 use itertools::Itertools;
 
-use crate::{block_models::{BlockModel, parse_model}, blocks::{self, AIR, ATLAS_X_BLOCKS, ATLAS_Y_BLOCKS, Block, BlockID, DIRT, GRASS, NOT_RENDERED_LAYER, STONE, WATER}, entity::{Entity, EntityRenderManager, EntityType}, features::{ConfiguredFeature, Feature, bush::BushFeature, tree::TreeFeature}, game::Vertex, inventory::ItemAtlas, util::neighbors};
+use crate::{block_models::{BlockModel, parse_model}, blocks::{self, AIR, ATLAS_X_BLOCKS, ATLAS_Y_BLOCKS, Block, BlockID, DIRT, GOLD, GRASS, NOT_RENDERED_LAYER, STONE, WATER}, entity::{Entity, EntityRenderManager, EntityType}, features::{Feature, bush::BushFeature, tree::TreeFeature}, game::Vertex, inventory::ItemAtlas, util::neighbors};
 
 pub struct Chunk {
     blocks: Vec<BlockID>,
+    generated_blocks: bool,
     model: Option<ChunkModel>,
     pub entities: HashMap<EntityType, Vec<Entity>>,
     // transparency_model: Option<ChunkModel>,
@@ -38,6 +39,7 @@ impl Chunk {
     pub fn new() -> Self {
         let mut _self = Self {
             blocks: vec![0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize],
+            generated_blocks: false,
             model: None,
             entities: HashMap::new(),
             // transparency_model: None,
@@ -180,7 +182,7 @@ impl ChunkManager {
                     n += 1;
                     if n % 1000 == 999 {
                         let avg = t/n;
-                        println!("avg gen blocks: {avg:?}");
+                        // println!("avg gen blocks: {avg:?}");
                     }
                     while let Ok(req) = gen_blocks_req_rx.try_recv() {
                         queue.insert(queue.iter().find_position(|it| Self::chunk_distance2_by_world(&it.chunk_position, player_position) < Self::chunk_distance2_by_world(&req.chunk_position, player_position)).map(|it| it.0).unwrap_or(0), req);
@@ -210,7 +212,7 @@ impl ChunkManager {
                     n += 1;
                     if n % 1000 == 999 {
                         let avg = t/n;
-                        println!("avg gen mesh: {avg:?}");
+                        // println!("avg gen mesh: {avg:?}");
                         t = Duration::ZERO;
                         n = 0;
                     }
@@ -233,6 +235,7 @@ impl ChunkManager {
         while let Ok(res) = self.gen_blocks_rx.try_recv() {
             if let Some(chunk) = self.chunks.get_mut(res.chunk_position) {
                 chunk.blocks = res.chunk_blocks;
+                chunk.generated_blocks = true;
                 self.generate_model(res.chunk_position, player_position);
                 for chunk_position in neighbors(res.chunk_position) {
                     self.generate_model(chunk_position, player_position);
@@ -348,7 +351,11 @@ impl ChunkManager {
                     let yf64 = y as f64+req.chunk_position[1] as f64 *(CHUNK_SIZE as f64);
                     if yf64 <= height {
                         if yf64+5.0 < height || height_gradient.magnitude() > 0.5 {
-                            blocks[index_in_chunk(x, y, z)] = STONE.id;
+                            if rand::random_range(0..10000) == 0 {
+                                blocks[index_in_chunk(x, y, z)] = GOLD.id;    
+                            } else {
+                                blocks[index_in_chunk(x, y, z)] = STONE.id;
+                            }
                         } else if yf64+1.0 < height {
                             blocks[index_in_chunk(x, y, z)] = DIRT.id;
                         }else {
@@ -906,6 +913,14 @@ impl ChunkManager {
 
     pub fn chunk_exists(&self, chunk_position: [i32; 3]) -> bool {
         self.chunks.main.contains_key(&chunk_position)
+    }
+
+    pub fn chunk_loaded(&self, chunk_position: [i32; 3]) -> bool {
+        if self.chunks.main.contains_key(&chunk_position) {
+            return self.chunks.main.get(&chunk_position).unwrap().generated_blocks;
+        } else {
+            return false;
+        }
     }
 
     pub fn get_block(&self, world_position: [i32; 3]) -> BlockID {

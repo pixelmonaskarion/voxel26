@@ -1,9 +1,6 @@
 use std::{collections::HashMap, hash::Hash, sync::{LazyLock, Mutex}};
 
-use bespoke_engine::{model::Model, surface_context::SurfaceCtx};
 use phf::phf_map;
-
-use crate::block_models::{self, parse_model};
 
 pub type BlockID = u16;
 
@@ -55,6 +52,16 @@ pub const DIRT: Block = Block {
     layer: SOLID_LAYER,
 };
 
+pub const GOLD: Block = Block {
+    id: 7,
+    solid: true,
+    color: [0.0, 0.0, 0.0, 1.0],
+    atlas_x: 6,
+    atlas_y: 2,
+    has_model: false,
+    layer: SOLID_LAYER,
+};
+
 pub const ROCK: Block = Block {
     id: 5,
     solid: false,
@@ -83,6 +90,7 @@ pub const BLOCKS: phf::Map<BlockID, Block> = phf_map! {
     4 => DIRT,
     5 => ROCK,
     6 => LEAVES,
+    7 => GOLD,
 };
 
 pub const ATLAS_X_BLOCKS: u32 = 16;
@@ -94,7 +102,7 @@ pub fn get_block(id: BlockID) -> Block {
     BLOCKS.get(&id).copied().unwrap_or_else(|| CUSTOM_BLOCKS.lock().unwrap().get(&id).unwrap().to_owned())
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Block {
     pub id: BlockID,
     pub solid: bool,
@@ -103,16 +111,6 @@ pub struct Block {
     pub atlas_y: u32,
     pub has_model: bool,
     pub layer: i32,
-}
-
-impl PartialEq for Block {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-
-    fn ne(&self, other: &Self) -> bool {
-        self.id != other.id
-    }
 }
 
 impl Hash for Block {
@@ -135,8 +133,3 @@ pub fn solid_block(block: BlockID) -> bool {
 pub const SOLID_LAYER: i32 = 0;
 pub const TRANSPARENT_LAYER: i32 = 1;
 pub const NOT_RENDERED_LAYER: i32 = 2;
-
-pub fn block_layer(block: BlockID) -> i32 {
-    let block = get_block(block);
-    return block.layer;
-}

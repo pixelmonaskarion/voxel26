@@ -143,7 +143,6 @@ pub fn generate_thick_wireframe_cube_with_params(
                 Vector3::new(lo - t, y - t, z - t),
                 Vector3::new(hi + t, y + t, z + t),
                 color,
-                &view_proj,
                 &normal_mat3,
             );
         }
@@ -158,7 +157,6 @@ pub fn generate_thick_wireframe_cube_with_params(
                 Vector3::new(x - t, lo - t, z - t),
                 Vector3::new(x + t, hi + t, z + t),
                 color,
-                &view_proj,
                 &normal_mat3,
             );
         }
@@ -173,7 +171,6 @@ pub fn generate_thick_wireframe_cube_with_params(
                 Vector3::new(x - t, y - t, lo - t),
                 Vector3::new(x + t, y + t, hi + t),
                 color,
-                &view_proj,
                 &normal_mat3,
             );
         }
@@ -190,7 +187,6 @@ fn add_box(
     min: Vector3<f32>,
     max: Vector3<f32>,
     color: [f32; 4],
-    view_proj: &Matrix4<f32>,
     normal_mat3: &Matrix3<f32>,
 ) {
     // (face normal, 4 corners in CCW winding when viewed from outside)
@@ -265,7 +261,6 @@ fn add_box(
 
         for p in quad.iter() {
             let world_pos = Vector4::new(p[0], p[1], p[2], 1.0);
-            // let clip_pos = view_proj * world_pos;
 
             vertices.push(Vertex {
                 position: [world_pos.x, world_pos.y, world_pos.z, world_pos.w],

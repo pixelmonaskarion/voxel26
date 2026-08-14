@@ -23,3 +23,6 @@ struct Particle {
     particle_type: u32,
     padding: vec2f,
 }
+
+const ATLAS_X_BLOCKS: u32 = 16;
+const ATLAS_Y_BLOCKS: u32 = 16;

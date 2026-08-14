@@ -22,6 +22,20 @@ impl Inventory {
     pub fn selected_item(&self) -> &InventoryItemStack {
         &self.items[self.selected]
     }
+
+    pub fn add(&mut self, item_stack: &InventoryItemStack) -> bool {
+        for inventory_stack in &mut self.items {
+            if inventory_stack.stack.item == item_stack.stack.item {
+                inventory_stack.stack.count += item_stack.stack.count;
+                return true;
+            }
+            if inventory_stack.stack.item == Item::Block(AIR) {
+                *inventory_stack = item_stack.clone();
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
 #[derive(Clone)]
