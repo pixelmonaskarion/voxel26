@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bespoke_engine::{binding::{Descriptor, UniformBinding}, camera::OrthographicCamera, model::Render, shader::{Shader, ShaderConfig}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture}};
+use bespoke_engine::{binding::{Descriptor, UniformBinding}, camera::OrthographicCamera, model::Render, shader::{Shader, ShaderConfig}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture}, window::MULTISAMPLE_COUNT};
 use cgmath::{Matrix4, Vector2, vec2, vec3};
 use wgpu::RenderPassDepthStencilAttachment;
 
@@ -85,7 +85,7 @@ pub struct ItemAtlas<'a> {
 
 impl <'a> ItemAtlas<'a> {
     pub fn new(surface_ctx: &dyn SurfaceCtx, block_atlas: &UniformBinding<Texture>) -> Self {
-        let texture = UniformBinding::new(surface_ctx.device(), "Item Atlas", Texture::blank_texture(surface_ctx.device(), 64*4, 64*4, surface_ctx.config().format), None);
+        let texture = UniformBinding::new(surface_ctx.device(), "Item Atlas", Texture::blank_texture(surface_ctx.device(), 64*4, 64*4, surface_ctx.config().format, 1), None);
         let block_renderer_screen_info = UniformBinding::new(surface_ctx.device(), "", ScreenInfo { 
             camera_raw: OrthographicCamera {
                 eye: vec3(1.0, 1.0, 1.0),
@@ -102,11 +102,11 @@ impl <'a> ItemAtlas<'a> {
             padding: 0.0,
          }, None);
         let block_renderer_transform_matrix = UniformBinding::new(surface_ctx.device(), "Block Renderer Transform Matrix", [[0.0; 4]; 4], None);
-        let block_renderer_shader = Shader::new_uniform("res/shaders/block_renderer.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&block_renderer_screen_info, block_atlas, &block_renderer_transform_matrix], vec![Vertex::desc()], ShaderConfig::default());
+        let block_renderer_shader = Shader::new_uniform("res/shaders/block_renderer.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&block_renderer_screen_info, block_atlas, &block_renderer_transform_matrix], vec![Vertex::desc()], ShaderConfig { multisample_count: 1, ..Default::default() });
         Self {
             item_positions: HashMap::new(),
             item_render_size: 64,
-            depth_texture: DepthTexture::create_depth_texture(surface_ctx.device(), texture.value.size.width, texture.value.size.height, "Item Atlas Depth Texture"),
+            depth_texture: DepthTexture::create_depth_texture(surface_ctx.device(), texture.value.size.width, texture.value.size.height, "Item Atlas Depth Texture", 1),
             texture,
             block_renderer_screen_info,
             block_renderer_shader,

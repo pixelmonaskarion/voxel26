@@ -15,6 +15,7 @@ mod inventory;
 mod ui;
 mod particles;
 mod entity;
+mod ssao;
 
 include!(concat!(env!("OUT_DIR"), "/resources.rs"));
 

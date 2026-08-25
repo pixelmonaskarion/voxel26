@@ -1,4 +1,4 @@
-use bespoke_engine::{binding::{Descriptor, UniformBinding}, culling::AABB, model::Model, resource_loader::load_resource_string, shader::{Shader, ShaderConfig, ShaderType, parse_shader}};
+use bespoke_engine::{binding::{Descriptor, UniformBinding}, culling::AABB, model::Model, resource_loader::load_resource_string, shader::{Shader, ShaderConfig, ShaderType, parse_shader}, window::MULTISAMPLE_COUNT};
 use cgmath::{InnerSpace, Matrix, Matrix3, Matrix4, SquareMatrix, Vector3, Vector4};
 use wgpu::{Device, FrontFace, PipelineCompilationOptions, TextureFormat};
 
@@ -70,7 +70,7 @@ pub fn cube_outline_shader<'a>(device: &Device, formats: Vec<TextureFormat>, scr
             conservative: false,
         },
         multisample: wgpu::MultisampleState {
-            count: 1,
+            count: MULTISAMPLE_COUNT.lock().unwrap().clone(),
             mask: !0,
             alpha_to_coverage_enabled: false,
         },

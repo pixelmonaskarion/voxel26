@@ -95,7 +95,7 @@ impl <'a> ParticleManager<'a> {
 
         let update_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_update_shader.wgsl"), vec![&particles_layout, &particles_layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "Particle".into())], surface_ctx.device());
         let instance_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_instance_shader.wgsl"), vec![&particles_layout, &particles_layout, &num_instances_output.layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "ParticleInstance".into())], surface_ctx.device());
-        let render_shader = Shader::new("res/shaders/particle_renderer.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&screen_info_binding.layout, &camera_view_binding.layout, &camera_projection_binding.layout], vec![&screen_info_binding.shader_type, &camera_view_binding.shader_type, &camera_projection_binding.shader_type], vec![BasicVertex::desc(), ParticleInstance::desc()], ShaderConfig::default());
+        let render_shader = Shader::new("res/shaders/particle_renderer.wgsl", surface_ctx.device(), vec![surface_ctx.config().format; 3], vec![&screen_info_binding.layout, &camera_view_binding.layout, &camera_projection_binding.layout], vec![&screen_info_binding.shader_type, &camera_view_binding.shader_type, &camera_projection_binding.shader_type], vec![BasicVertex::desc(), ParticleInstance::desc()], ShaderConfig::default());
 
         let size = 0.1;
         let particle_model = Model::new(vec![

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, hash::{DefaultHasher, Hash, Hasher}, ops::{AddAssign, Mul}, sync::mpsc, time::{Duration, SystemTime}};
 
 use bespoke_engine::{binding::UniformBinding, model::Render, shader::Shader, surface_context::SurfaceCtx, texture::Texture};
-use cgmath::{InnerSpace, MetricSpace, Vector3, vec2};
+use cgmath::{InnerSpace, MetricSpace, Vector3, vec2, vec3};
 use noise::{NoiseFn, Perlin};
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, RenderPass};
@@ -14,6 +14,7 @@ pub struct Chunk {
     generated_blocks: bool,
     model: Option<ChunkModel>,
     pub entities: HashMap<EntityType, Vec<Entity>>,
+    pub needed_chunk_updates: Vec<NeededChunkUpdate>,
     // transparency_model: Option<ChunkModel>,
 }
 
@@ -26,6 +27,11 @@ pub struct ChunkModel {
     num_transparent_indices: usize,
     num_modeled_vertices: usize,
     num_modeled_indices: usize,
+}
+
+pub struct NeededChunkUpdate {
+    pub relative_chunk_pos: Vector3<i32>,
+    pub synchronous: bool,
 }
 
 pub const CHUNK_SIZE: u32 = 32;
@@ -43,13 +49,32 @@ impl Chunk {
             generated_blocks: false,
             model: None,
             entities: HashMap::new(),
-            // transparency_model: None,
+            needed_chunk_updates: vec![],
         };
         _self
     }
 
-    pub fn set_block(&mut self, local_coords: [u32; 3], block: BlockID) {
+    pub fn set_block(&mut self, local_coords: [u32; 3], block: BlockID, update_synchronously: bool) {
         self.blocks[index_in_chunk(local_coords[0], local_coords[1], local_coords[2])] = block;
+        self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 0, 0), synchronous: update_synchronously });
+        if local_coords[0] == 0 {
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(-1, 0, 0), synchronous: update_synchronously });
+        }
+        if local_coords[1] == 0 {
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, -1, 0), synchronous: update_synchronously });
+        }
+        if local_coords[2] == 0 {
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 0, -1), synchronous: update_synchronously });
+        }
+        if local_coords[0] == CHUNK_SIZE-1 {
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(1, 0, 0), synchronous: update_synchronously });
+        }
+        if local_coords[1] == CHUNK_SIZE-1 {
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 1, 0), synchronous: update_synchronously });
+        }
+        if local_coords[2] == CHUNK_SIZE-1 {
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 0, 1), synchronous: update_synchronously });
+        }
     }
 
     pub fn render<'s: 'b, 'b>(&'s self, render_pass: &mut RenderPass<'b>, entity_render_manager: &'b EntityRenderManager, item_atlas: &ItemAtlas, chunk_shader: &'b Shader<'b>, camera_view: &UniformBinding<[[f32; 4]; 4]>, camera_projection: &UniformBinding<[[f32; 4]; 4]>, atlas_binding: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) {
@@ -279,6 +304,33 @@ impl ChunkManager {
         for position in neighbors(chunk_position) {
             self.generate_model(position, player_position);
         }
+    }
+
+    pub fn generate_model_and_surroundings_now(&mut self, chunk_position: [i32; 3], player_position: [f32; 3], surface_ctx: &dyn SurfaceCtx) {
+        self.generate_model_now(chunk_position, player_position, surface_ctx);
+        for position in neighbors(chunk_position) {
+            self.generate_model_now(position, player_position, surface_ctx);
+        }
+    }
+
+    pub fn generate_model_now(&mut self, chunk_position: [i32; 3], player_position: [f32; 3], surface_ctx: &dyn SurfaceCtx) {
+        let time = SystemTime::now();
+        if let Some(chunk_blocks) = self.chunks.get(chunk_position).map(|it| it.blocks.clone()) {
+            let req = GenerateChunkMeshRequest {
+                chunk_position,
+                player_position,
+                chunk_blocks,
+                cpx: self.chunks.get([chunk_position[0]+1, chunk_position[1], chunk_position[2]]).map(|it| it.blocks.clone()),
+                cnx: self.chunks.get([chunk_position[0]-1, chunk_position[1], chunk_position[2]]).map(|it| it.blocks.clone()),
+                cpy: self.chunks.get([chunk_position[0], chunk_position[1]+1, chunk_position[2]]).map(|it| it.blocks.clone()),
+                cny: self.chunks.get([chunk_position[0], chunk_position[1]-1, chunk_position[2]]).map(|it| it.blocks.clone()),
+                cpz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]+1]).map(|it| it.blocks.clone()),
+                cnz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]-1]).map(|it| it.blocks.clone()),
+            };
+            let res = Self::generate_mesh_req(req, surface_ctx.device());
+            self.chunks.get_mut(chunk_position).unwrap().model = res.chunk_model;
+        }
+        println!("took {:?} to generate model synchronously", SystemTime::now().duration_since(time).unwrap());
     }
 
     // pub async fn generate(&self, chunk_position: [i32; 3], surface_ctx: &dyn SurfaceCtx) {
@@ -940,7 +992,7 @@ impl ChunkManager {
         }
     }
 
-    pub fn set_block(&mut self, world_position: [i32; 3], block_id: BlockID) {
+    pub fn set_block(&mut self, world_position: [i32; 3], block_id: BlockID, update_synchronously: bool) {
         let x = world_position[0];
         let y = world_position[1];
         let z = world_position[2];
@@ -952,6 +1004,7 @@ impl ChunkManager {
         let bz = z.rem_euclid(CHUNK_SIZE as i32) as u32;
         if let Some(chunk) = self.chunks.get_mut([cx, cy, cz]) {
             chunk.blocks[index_in_chunk(bx, by, bz)] = block_id;
+            chunk.set_block([bx, by, bz], block_id, update_synchronously);
         }
     }
 }

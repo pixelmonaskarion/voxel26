@@ -10,7 +10,7 @@ pub struct Player {
     pub velocity: Vector3<f32>,
     pub time_since_ground: Duration,
     pub movement_mode: i32,
-    pub break_cooldown: i32,
+    pub break_cooldown: Duration,
 
     pub inventory: Inventory,
     pub health: f32,
@@ -23,7 +23,7 @@ impl Player {
             velocity: vec3(0.0, 0.0, 0.0),
             time_since_ground: Duration::new(2, 0),
             movement_mode: 0,
-            break_cooldown: 0,
+            break_cooldown: Duration::ZERO,
             inventory: Inventory::new(item_atlas, block_atlas, surface_ctx),
             health: 20.0,
         };

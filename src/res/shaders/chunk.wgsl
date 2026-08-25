@@ -7,6 +7,7 @@ struct VertexOutput {
     @location(0) normal: vec3<f32>,
     @location(1) color: vec4f,
     @location(2) transparency: f32,
+    @location(3) worldspace: vec4f,
 }
 
 @vertex
@@ -18,23 +19,28 @@ fn vs_main(
     out.normal = model.normal.xyz;
     out.color = model.color;
     out.transparency = model.position.w;
+    out.worldspace = (screen_info.camera.view * vec4f(model.position.xyz, 1.0));
     return out;
 }
 
+struct FragmentOutput {
+  @location(0) color: vec4f,
+  @location(1) normal: vec4f,
+  @location(2) worldspace: vec4f,
+}
+
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    //stretch
-    //fract
-    //multiply by z
-    //fract
-    //1.whole+3
+fn fs_main(in: VertexOutput) -> FragmentOutput {
     var output = textureSample(t_atlas, s_atlas, fix_repeats(in.color));
     if output.w == 0.0 {
         discard;
     }
     let lighting = lighting(in.normal);
-    output = vec4f(output.xyz*lighting, output.w*in.transparency);
-    return output;
+    var out: FragmentOutput;
+    out.color = vec4f(output.xyz*lighting, output.w*in.transparency);
+    out.normal = vec4f(in.normal, 1.0);
+    out.worldspace = in.worldspace;
+    return out;
 }
 
 fn fix_repeats(color: vec4f) -> vec2f {

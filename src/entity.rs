@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bespoke_engine::{binding::{Binding, Descriptor, create_layout}, culling::AABB, model::{Model, ToRaw}, shader::{Shader, ShaderConfig}, surface_context::SurfaceCtx, texture::Texture, window::BasicVertex};
+use bespoke_engine::{binding::{Binding, Descriptor, create_layout}, culling::AABB, model::{Model, ToRaw}, shader::{Shader, ShaderConfig}, surface_context::SurfaceCtx, texture::{Texture, TextureLayoutConfig}, window::BasicVertex};
 use bytemuck::bytes_of;
 use cgmath::{Vector3, vec3};
 use wgpu::{Buffer, BufferUsages, wgt::BufferDescriptor};
@@ -97,7 +97,7 @@ impl <'a> EntityRenderManager<'a> {
             BasicVertex { position: [size, -size, 0.0], tex_coords: [1.0, 1.0] },
             BasicVertex { position: [size, size, 0.0], tex_coords: [1.0, 0.0] },
         ], &[0_u16, 2, 1, 2, 3, 1], AABB { dimensions: [1.0, 1.0, 0.0] }, surface_ctx.device());
-        let item_shader = Shader::new("res/shaders/item_entity.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&create_layout::<ScreenInfo>(surface_ctx.device()), &create_layout::<[[f32; 4]; 4]>(surface_ctx.device()), &create_layout::<[[f32; 4]; 4]>(surface_ctx.device()), &create_layout::<Texture>(surface_ctx.device())], vec![&ScreenInfo::shader_type(), &<[[f32; 4]; 4]>::shader_type(), &<[[f32; 4]; 4]>::shader_type(), &Texture::shader_type()], vec![BasicVertex::desc(), ItemInstance::desc()], ShaderConfig::default());
+        let item_shader = Shader::new("res/shaders/item_entity.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&create_layout::<ScreenInfo>((), surface_ctx.device()), &create_layout::<[[f32; 4]; 4]>((), surface_ctx.device()), &create_layout::<[[f32; 4]; 4]>((), surface_ctx.device()), &create_layout::<Texture>(TextureLayoutConfig::default(), surface_ctx.device())], vec![&ScreenInfo::shader_type(()), &<[[f32; 4]; 4]>::shader_type(()), &<[[f32; 4]; 4]>::shader_type(()), &Texture::shader_type(TextureLayoutConfig::default())], vec![BasicVertex::desc(), ItemInstance::desc()], ShaderConfig::default());
         let instance_buffer = surface_ctx.device().create_buffer(&BufferDescriptor {
             label: Some("Entity Instance Buffer"),
             mapped_at_creation: false,
