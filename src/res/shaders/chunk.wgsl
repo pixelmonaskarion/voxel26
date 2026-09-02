@@ -23,21 +23,14 @@ fn vs_main(
     return out;
 }
 
-struct FragmentOutput {
-  @location(0) color: vec4f,
-  @location(1) normal: vec4f,
-  @location(2) worldspace: vec4f,
-}
-
 @fragment
-fn fs_main(in: VertexOutput) -> FragmentOutput {
+fn fs_main(in: VertexOutput) -> DeferredFragmentOutput {
     var output = textureSample(t_atlas, s_atlas, fix_repeats(in.color));
     if output.w == 0.0 {
         discard;
     }
-    let lighting = lighting(in.normal);
-    var out: FragmentOutput;
-    out.color = vec4f(output.xyz*lighting, output.w*in.transparency);
+    var out: DeferredFragmentOutput;
+    out.color = vec4f(output.xyz, output.w*in.transparency);
     out.normal = vec4f(in.normal, 1.0);
     out.worldspace = in.worldspace;
     return out;
@@ -51,20 +44,4 @@ fn fix_repeats(color: vec4f) -> vec2f {
     let y_scaled_fract = fract(y_scaled);
     let y = (floor(y_scaled)+fract(y_scaled_fract*color.w))/f32(ATLAS_Y_BLOCKS);
     return vec2f(x, y);
-}
-
-fn lighting(normal: vec3f) -> f32 {
-    if (normal.x == 0.0 && normal.y == 1.0 && normal.z == 0.0) {
-        return 1.0;
-    } else if (normal.x == 0.0 && normal.y == 0.0 && normal.z == 1.0) {
-        return 0.8;
-    } else if (normal.x == 0.0 && normal.y == 0.0 && normal.z == -1.0) { 
-        return 0.8;
-    } else if (normal.x == 1.0 && normal.y == 0.0 && normal.z == 0.0) {
-        return 0.6;
-    } else if ((normal.x == -1.0 && normal.y == 0.0 && normal.z == 0.0)) {
-        return 0.6;
-    } else {
-        return 0.5;
-    }
 }

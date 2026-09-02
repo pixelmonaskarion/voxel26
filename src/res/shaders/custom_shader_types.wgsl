@@ -16,12 +16,18 @@ struct ParticleInstance {
 }
 
 struct Particle {
+    lifetime: f32,
+    particle_type: u32,
+    padding: vec2f,
     position: vec4f,
     color: vec4f,
     velocity: vec4f,
-    lifetime: u32,
-    particle_type: u32,
-    padding: vec2f,
+}
+
+struct DeferredFragmentOutput {
+  @location(0) color: vec4f,
+  @location(1) normal: vec4f,
+  @location(2) worldspace: vec4f,
 }
 
 const ATLAS_X_BLOCKS: u32 = 16;

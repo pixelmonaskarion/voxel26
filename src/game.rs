@@ -1,22 +1,35 @@
-use std::{collections::HashMap, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, f32::consts::PI, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::{load_resource, load_resource_string}, shader::{Shader, ShaderConfig, ShaderType}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture, TextureLayoutConfig}, window::{BasicVertex, MULTISAMPLE_COUNT, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
-use bytemuck::{NoUninit, bytes_of};
+use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::{load_resource, load_resource_string}, shader::{Shader, ShaderConfig, ShaderType}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture, TextureLayoutConfig}, window::{BasicVertex, MULTISAMPLE_COUNT, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
+use bytemuck::{NoUninit, Pod, Zeroable, bytes_of};
 use cgmath::{InnerSpace, MetricSpace, Vector2, Vector3, Zero, vec2, vec3};
-use wgpu::{Color, Features, Limits, RenderPass, TextureFormat, wgt::CommandEncoderDescriptor};
+use wgpu::{Color, CommandEncoder, Features, Limits, RenderPass, TextureFormat, wgt::CommandEncoderDescriptor};
 use wgpu_text::{BrushBuilder, TextBrush, glyph_brush::{Layout, OwnedSection, OwnedText, ab_glyph::FontVec}};
 use winit::{dpi::PhysicalPosition, event::{KeyEvent, Modifiers, MouseButton, TouchPhase, WindowEvent}, keyboard::{KeyCode, PhysicalKey::Code}};
-use crate::{RESOURCES, blocks::{AIR, get_block}, chunk::{CHUNK_SIZE, ChunkManager}, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, inventory::{InventoryItemStack, Item, ItemAtlas, ItemStack}, particles::{Particle, ParticleManager, ParticleType}, player::Player, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, ui::{InventoryModel, OpenInventory, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, mouse_tile_coords, text_sections_for_inventory}, util::{self, chunk_for_block_position, chunk_for_world_position}};
+use crate::{RESOURCES, blocks::{AIR, get_block}, chunk::{CHUNK_SIZE, ChunkManager}, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, inventory::{Inventory, InventoryItemStack, Item, ItemAtlas, ItemStack}, particles::{Particle, ParticleManager, ParticleType}, player::Player, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, ui::{InventoryLocation, InventoryLocationMut, InventoryModel, OpenInventory, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, inventory_location, inventory_physical_size, mouse_tile_coords, text_sections_for_inventory}, util::{self, chunk_for_block_position, chunk_for_world_position}};
+
+const BLUR_STEPS: i32 = 11;
 
 pub struct Game<'a> {
     deferred_color_output: UniformBinding<Texture>,
     deferred_normal_output: UniformBinding<Texture>,
+    deferred_normal_resolve: UniformBinding<Texture>,
     deferred_worldspace_output: UniformBinding<Texture>,
+    deferred_worldspace_resolve: UniformBinding<Texture>,
+    deferred_ssao_output: UniformBinding<Texture>,
+    intermediate_ssao_texture: UniformBinding<Texture>,
     deferred_depth_texture: UniformBinding<DepthTexture>,
     deferred_combine_shader: Shader<'a>,
+    ssao_shader: Shader<'a>,
+    ssao_blur_shader: Shader<'a>,
 
     ssao_kernel_samples: UniformBinding<SSAOKernelSamples>,
     random_texture: UniformBinding<Texture>,
+
+    blur_radius: UniformBinding<[f32; 2]>,
+    blur_steps: UniformBinding<i32>,
+    blur_axis: UniformBinding<[f32; 2]>,
+    blur_kernel: UniformBinding<BlurKernel>,
 
     camera: Camera,
     player: Player,
@@ -53,6 +66,7 @@ pub struct Game<'a> {
     text_brush: TextBrush<FontVec>,
     text_sections: Vec<OwnedSection>,
     open_inventory: Option<OpenInventory>,
+    weird_player_inventory_reference: OpenInventory,
     open_inventory_model: Option<InventoryModel>,
     open_inventory_item_subsections_uniform: Option<UniformBinding<DynamicOffsetUniformVec<[f32; 4], 0>>>,
     cursor_stack: InventoryItemStack,
@@ -112,10 +126,15 @@ impl ToRaw for Vertex {
 impl <'a> Game<'a> {
     pub async fn new(surface_ctx: &dyn SurfaceCtx) -> Self {
         let deferred_data_format = TextureFormat::Rgba16Float;
+        let ssao_format = TextureFormat::Rgba16Float;
         let deferred_normal_output = UniformBinding::new(surface_ctx.device(), "Deferred Normal Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
+        let deferred_normal_resolve = UniformBinding::new(surface_ctx.device(), "Deferred Normal Resolve", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, 1), None);
         let deferred_color_output = UniformBinding::new(surface_ctx.device(), "Deferred Color Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, surface_ctx.config().format, MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
         let deferred_worldspace_output = UniformBinding::new(surface_ctx.device(), "Deferred Worldspace Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
+        let deferred_worldspace_resolve = UniformBinding::new(surface_ctx.device(), "Deferred Worldspace Resolve", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, 1), None);
         let deferred_depth_texture = UniformBinding::new(surface_ctx.device(), "Deferred Depth Texture", DepthTexture::create_depth_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, "Deferred", MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
+        let intermediate_ssao_texture = UniformBinding::new(surface_ctx.device(), "Intermediate SSAO Texture", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, ssao_format, 1), None);
+        let deferred_ssao_output = UniformBinding::new(surface_ctx.device(), "Deferred SSAO Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, ssao_format, 1), None);
         let deferred_formats = vec![surface_ctx.config().format, deferred_data_format, deferred_data_format];
 
         let ssao_kernel_samples = UniformBinding::new(surface_ctx.device(), "SSAO Kernel Samples", generate_ssao_kernel_samples(), None);
@@ -132,7 +151,14 @@ impl <'a> Game<'a> {
             sky: 0.0,
         };
         let screen_info_binding = UniformBinding::new(surface_ctx.device(), "Screen Info", ScreenInfo::new(screen_size, 0.0, camera.to_raw()), None);
-        let deferred_combine_shader = Shader::new_uniform("res/shaders/deferred_combine.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&deferred_color_output, &deferred_normal_output, &deferred_worldspace_output, surface_ctx.depth_texture(), &screen_info_binding, &ssao_kernel_samples, &random_texture], vec![BasicVertex::desc()], ShaderConfig { depth_compare: wgpu::CompareFunction::Always,  ..Default::default() });
+        let deferred_combine_shader = Shader::new_uniform("res/shaders/deferred_combine.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&deferred_color_output, &deferred_normal_output, &deferred_worldspace_output, surface_ctx.depth_texture(), &deferred_ssao_output, &screen_info_binding], vec![BasicVertex::desc()], ShaderConfig { depth_compare: wgpu::CompareFunction::Always,  ..Default::default() });
+        let ssao_shader = Shader::new_uniform("res/shaders/ssao.wgsl", surface_ctx.device(), vec![ssao_format], vec![&deferred_normal_resolve, &deferred_worldspace_resolve, &screen_info_binding, &ssao_kernel_samples, &random_texture], vec![BasicVertex::desc()], ShaderConfig {  enable_depth_texture: false, multisample_count: 1, ..Default::default() });
+        
+        let blur_steps = UniformBinding::new(surface_ctx.device(), "Blur Steps", BLUR_STEPS, None);
+        let blur_radius = UniformBinding::new(surface_ctx.device(), "Blur Radius", [1.0 / surface_ctx.size().0 as f32, 1.0 / surface_ctx.size().1 as f32], None);
+        let blur_axis = UniformBinding::new(surface_ctx.device(), "Blur Axis", [0.0; 2], None);
+        let blur_kernel = UniformBinding::new(surface_ctx.device(), "Blur Kernel", generate_blur_kernel(), None);
+        let ssao_blur_shader = Shader::new_uniform("res/shaders/blur.wgsl", surface_ctx.device(), vec![ssao_format], vec![&intermediate_ssao_texture, &blur_radius, &blur_steps, &blur_axis, &blur_kernel], vec![BasicVertex::desc()], ShaderConfig { enable_depth_texture: false, multisample_count: 1, ..Default::default() });
 
         let mut chunk_manager = ChunkManager::new(surface_ctx);
         chunk_manager.get_chunk_or_create([0; 3]);
@@ -142,7 +168,7 @@ impl <'a> Game<'a> {
         let atlas_uniform = UniformBinding::new(surface_ctx.device(), "Atlas", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &load_resource("res/atlas.png").unwrap(), "Atlas", None, None).unwrap(), None);
         let chunk_shader = Shader::new_uniform("res/shaders/chunk.wgsl", surface_ctx.device(), deferred_formats.clone(), vec![&screen_info_binding, &atlas_uniform], vec![Vertex::desc()], ShaderConfig { line_mode: wgpu::PolygonMode::Fill, ..Default::default() });
 
-        let cube_outline_shader = cube_outline_shader(surface_ctx.device(), vec![surface_ctx.config().format; 3], &screen_info_binding);
+        let cube_outline_shader = cube_outline_shader(surface_ctx.device(), deferred_formats.clone(), &screen_info_binding);
         let cube_outline_model = None;
 
         let hotbar_item_ui_models = generate_hotbar_item_ui_models(surface_ctx);
@@ -156,8 +182,8 @@ impl <'a> Game<'a> {
 
         let crosshair_model = generate_crosshair_ui_model(surface_ctx);
 
-        let particle_manager = ParticleManager::new(surface_ctx, &screen_info_binding);
-        let entity_render_manager = EntityRenderManager::new(surface_ctx);
+        let particle_manager = ParticleManager::new(surface_ctx, &screen_info_binding, deferred_formats.clone());
+        let entity_render_manager = EntityRenderManager::new(surface_ctx, deferred_formats.clone());
         
         let text_brush = BrushBuilder::using_font(FontVec::try_from_vec(load_resource("res/unifont.ttf").unwrap()).unwrap()).build(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, surface_ctx.config().format);
         let cursor_stack = InventoryItemStack::new(ItemStack::new(Item::Block(AIR), 0), &mut item_atlas, &atlas_uniform, surface_ctx);
@@ -166,9 +192,19 @@ impl <'a> Game<'a> {
         Self {
             deferred_color_output,
             deferred_normal_output,
+            deferred_normal_resolve,
             deferred_worldspace_output,
+            deferred_worldspace_resolve,
+            intermediate_ssao_texture,
+            deferred_ssao_output,
             deferred_depth_texture,
             deferred_combine_shader,
+            ssao_shader,
+            ssao_blur_shader,
+            blur_axis,
+            blur_radius,
+            blur_steps,
+            blur_kernel,
             ssao_kernel_samples,
             random_texture,
             camera,
@@ -205,6 +241,7 @@ impl <'a> Game<'a> {
             open_inventory: None,
             open_inventory_model: None,
             open_inventory_item_subsections_uniform: None,
+            weird_player_inventory_reference: OpenInventory::PlayerInventory,
             cursor_stack,
             cursor_stack_model,
             cursor_stack_subsection_uniform,
@@ -222,9 +259,13 @@ impl <'s> WindowHandler for Game<'s> {
         self.hotbar_background_ui_models = generate_hotbar_background_ui_models(surface_ctx, self.player.inventory.selected);
         self.text_brush.resize_view(surface_ctx.config().width as f32, surface_ctx.config().height as f32, surface_ctx.queue());
         self.deferred_normal_output.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_normal_output.value.format, MULTISAMPLE_COUNT.lock().unwrap().clone()));
+        self.deferred_normal_resolve.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_normal_resolve.value.format, 1));
         self.deferred_color_output.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_color_output.value.format, MULTISAMPLE_COUNT.lock().unwrap().clone()));
         self.deferred_worldspace_output.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_worldspace_output.value.format, MULTISAMPLE_COUNT.lock().unwrap().clone()));
+        self.deferred_worldspace_resolve.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_worldspace_resolve.value.format, 1));
+        self.deferred_ssao_output.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_ssao_output.value.format, 1));
         self.deferred_depth_texture.replace_data(surface_ctx.device(), DepthTexture::create_depth_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, "Deferred", MULTISAMPLE_COUNT.lock().unwrap().clone()));
+        self.blur_radius.set_data(surface_ctx.queue(), [1.0 / new_size.x as f32, 1.0 / new_size.y as f32]);
     }
 
     fn update(&mut self, surface_ctx: &dyn SurfaceCtx, delta: Duration) {
@@ -242,9 +283,8 @@ impl <'s> WindowHandler for Game<'s> {
         render_pass.set_bind_group(1, &self.deferred_normal_output.binding, &[]);
         render_pass.set_bind_group(2, &self.deferred_worldspace_output.binding, &[]);
         render_pass.set_bind_group(3, &self.deferred_depth_texture.binding, &[]);
-        render_pass.set_bind_group(4, &self.screen_info_binding.binding, &[]);
-        render_pass.set_bind_group(5, &self.ssao_kernel_samples.binding, &[]);
-        render_pass.set_bind_group(6, &self.random_texture.binding, &[]);
+        render_pass.set_bind_group(4, &self.deferred_ssao_output.binding, &[]);
+        render_pass.set_bind_group(5, &self.screen_info_binding.binding, &[]);
         surface_ctx.screen_model().render(render_pass);
     }
 
@@ -293,6 +333,7 @@ impl <'s> WindowHandler for Game<'s> {
             self.chunk_shader.reload_source(surface_ctx.device());
             self.cube_outline_shader.reload_source(surface_ctx.device());
             self.deferred_combine_shader.reload_source(surface_ctx.device());
+            self.ssao_shader.reload_source(surface_ctx.device());
             self.item_ui_shader.reload_source(surface_ctx.device());
             self.post_processing_shader.reload_source(surface_ctx.device());
             self.ui_shader.reload_source(surface_ctx.device());
@@ -336,6 +377,7 @@ impl <'s> WindowHandler for Game<'s> {
     fn post_process_render<'a: 'b, 'c: 'b, 'b>(&'a mut self, surface_ctx: &'c dyn SurfaceCtx, render_pass: & mut RenderPass<'b>, surface_texture: &'c UniformBinding<Texture>) {
         self.post_processing_shader.bind(render_pass);
         render_pass.set_bind_group(0, &surface_texture.binding, &[]);
+        // render_pass.set_bind_group(0, &self.deferred_normal_resolve.binding, &[]);
         surface_ctx.screen_model().render(render_pass);
 
         for (i, ui_model) in self.hotbar_item_ui_models.iter().enumerate() {
@@ -473,6 +515,11 @@ impl <'s> Game<'s> {
                             self.chunk_manager.set_block(coordinate, block.id, true);
                             if self.player.colliding_world(&self.chunk_manager) {
                                 self.chunk_manager.set_block(coordinate, before, true);
+                            } else {
+                                self.player.inventory.selected_item_mut().stack.count -= 1;
+                                if self.player.inventory.selected_item_mut().stack.count <= 0 {
+                                    *self.player.inventory.selected_item_mut() = InventoryItemStack::new(ItemStack::EMPTY, &mut self.item_atlas, &self.atlas_uniform, surface_ctx);
+                                }
                             }
                             self.player.break_cooldown = Duration::from_secs_f32(0.2);
                         }
@@ -489,16 +536,16 @@ impl <'s> Game<'s> {
                             self.particle_manager.add_particle(Particle {
                                 particle_type: ParticleType::BlockBreak,
                                 position: (Vector3::from(coordinate).cast().unwrap()+vec3(rand::random_range(0.0..1.0), rand::random_range(0.0..1.0), rand::random_range(0.0..1.0))).extend(1.0).into(),
-                                velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*0.07).into(),
+                                velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*2.0).into(),
                                 color: before_block.color,
-                                lifetime: 20,
+                                lifetime: Duration::from_secs_f32(20.0),
                             });
                         }
-                        self.player.damage(1.0);
                         self.chunk_manager.get_chunk_or_create(chunk_for_block_position(coordinate)).add_entity(Entity {
                             entity_type: TypedEntity::Item { stack: InventoryItemStack::new(ItemStack::new(Item::Block(before_block), 1), &mut self.item_atlas, &self.atlas_uniform, surface_ctx) },
                             position: Vector3::<i32>::from(coordinate).cast().unwrap()+vec3(0.5, 0.5, 0.5),
                             velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*5.0).into(),
+                            time_alive: Duration::ZERO,
                         });
                         self.player.break_cooldown = Duration::from_secs_f32(0.2);
                     }
@@ -538,18 +585,22 @@ impl <'s> Game<'s> {
                 self.open_inventory_model = None;
                 lock_mouse(surface_ctx);
             } else {
-                self.open_inventory = Some(OpenInventory::PlayerInventory);
-                self.open_inventory_model = Some(create_inventory_model(surface_ctx, &OpenInventory::PlayerInventory));
+                self.open_inventory = Some(OpenInventory::PlayerCrafting(Inventory::empty_size(10, &mut self.item_atlas, &self.atlas_uniform, surface_ctx)));
+                self.open_inventory_model = Some(create_inventory_model(surface_ctx, self.open_inventory.as_ref().unwrap()));
                 unlock_mouse(surface_ctx);
             }
         }
         if self.new_mouse_down.contains(&MouseButton::Left) {
-            if let Some(open_inventory) = &self.open_inventory {
-                if let Some(index) = mouse_tile_coords(vec2(self.mouse_coords.x/surface_ctx.config().width as f32, self.mouse_coords.y/surface_ctx.config().height as f32), surface_ctx, open_inventory) {
-                    let inventory = match open_inventory {
-                        OpenInventory::PlayerInventory => &mut self.player.inventory.items
+            if let Some(open_inventory) = &mut self.open_inventory {
+                if let Some(location) = mouse_tile_coords(vec2(self.mouse_coords.x/surface_ctx.config().width as f32, self.mouse_coords.y/surface_ctx.config().height as f32), surface_ctx, open_inventory) {
+                    let mut location_mut = if let OpenInventory::PlayerInventory = location.inventory {
+                        InventoryLocationMut { inventory: &mut self.weird_player_inventory_reference, x: location.x, y: location.y }
+                    } else {
+                        InventoryLocationMut { x: location.x, y: location.y, inventory: open_inventory }
                     };
-                    std::mem::swap(&mut self.cursor_stack, &mut inventory[index]);
+                    // if let Some(inventory_stack) = Self::stack_at_location_mut(&mut location_mut, &mut self.player.inventory) {
+                        Self::interact_inventory_slot(&mut location_mut, &mut self.player.inventory, &mut self.cursor_stack);
+                    // }
                 }
             }
         }
@@ -599,7 +650,7 @@ impl <'s> Game<'s> {
             for entity_type in self.chunk_manager.get_chunk_or_create(pos).entities.keys().cloned().collect::<Vec<EntityType>>() {
                 let mut i = 0;
                 let mut len = self.chunk_manager.get_chunk_or_create(pos).entities.get(&entity_type).unwrap().len();
-                let mut temp_entity = Entity { position: vec3(0.0, 0.0, 0.0), velocity: vec3(0.0, 0.0, 0.0), entity_type: TypedEntity::Marker };
+                let mut temp_entity = Entity { position: vec3(0.0, 0.0, 0.0), velocity: vec3(0.0, 0.0, 0.0), entity_type: TypedEntity::Marker, time_alive: Duration::ZERO };
                 while i < len {
                     std::mem::swap(&mut self.chunk_manager.get_chunk_or_create(pos).entities.get_mut(&entity_type).unwrap()[i], &mut temp_entity);
                     temp_entity.update(&self.chunk_manager, delta);
@@ -652,9 +703,8 @@ impl <'s> Game<'s> {
         self.chunk_manager.poll_channels(self.player.position.into());
     }
 
-    fn update_render_setup(&mut self, surface_ctx: &dyn SurfaceCtx, _delta: Duration) {
-        let mut text_sections = vec![];
-        self.particle_manager.run_step(surface_ctx);
+    fn update_render_setup(&mut self, surface_ctx: &dyn SurfaceCtx, delta: Duration) {
+        self.particle_manager.run_step(delta, surface_ctx);
         let time = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()-self.start_time) as f32 / 1000.0;
         self.screen_info_binding.set_data(surface_ctx.queue(), ScreenInfo::new(self.screen_size, time, self.camera.to_raw()));
 
@@ -667,30 +717,35 @@ impl <'s> Game<'s> {
             self.item_atlas.subsection_for_position(item.atlas_coordinates)
         }).collect::<Vec<[f32; 4]>>().try_into().unwrap();
         self.hotbar_atlas_subsections_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: hotbar_atlas_subsections, alignment: self.hotbar_atlas_subsections_uniform.value.alignment });
-        if let Some(open_inventory) = &self.open_inventory {
-            let values = match open_inventory {
-                OpenInventory::PlayerInventory => {
-                    self.player.inventory.items.iter().map(|it| self.item_atlas.subsection_for_position(it.atlas_coordinates)).collect()
+        if let Some(open_inventory) = &mut self.open_inventory {
+            let mut values = vec![];
+            let (num_physical_rows, num_physical_cols) = inventory_physical_size(open_inventory);
+            for physical_y in 0..num_physical_rows {
+                for physical_x in 0..num_physical_cols {
+                    if let Some(location) = inventory_location(open_inventory, physical_x, physical_y) {
+                        if let Some(stack) = Self::stack_at_location(&location, &self.player.inventory) {
+                            values.push(self.item_atlas.subsection_for_position(stack.atlas_coordinates));
+                        } else {
+                            println!("got location {location:?} but no stack is associated");
+                        }
+                    }
                 }
-            };
+            }
             let value = DynamicOffsetUniformVec { values, alignment: surface_ctx.device().limits().min_uniform_buffer_offset_alignment as usize };
             if self.open_inventory_item_subsections_uniform.is_none() {
                 self.open_inventory_item_subsections_uniform = Some(UniformBinding::new(surface_ctx.device(), "Open Inventory Item Subsections", value, None));
             } else {
                 self.open_inventory_item_subsections_uniform.as_mut().unwrap().set_data(surface_ctx.queue(), value);
             }
-            text_sections.extend_from_slice(&text_sections_for_inventory(surface_ctx, &|i| { 
-                match open_inventory {
-                    OpenInventory::PlayerInventory => &self.player.inventory.items[i].stack
-                }
+            self.text_sections.extend_from_slice(&text_sections_for_inventory(surface_ctx, &|location| { 
+                Self::stack_at_location(&location, &self.player.inventory).map(|it| it.stack.count)
              }, open_inventory));
         }
 
         let screen_aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
-        let hotbar_item_text_sections = self.player.inventory.items.iter().enumerate().flat_map(|(i, item)| {
+        let hotbar_item_text_sections = self.player.inventory.items[0..9].iter().enumerate().flat_map(|(i, item)| {
             if item.stack.count > 1 {
-                Some(
-                OwnedSection::default()
+                Some(OwnedSection::default()
                     .add_text(OwnedText::new(format!("{}", item.stack.count))
                     .with_scale(surface_ctx.config().height as f32 * hotbar_item_height()/4.0)
                     .with_color([1.0; 4]))
@@ -701,17 +756,19 @@ impl <'s> Game<'s> {
                 None
             }
         }).collect::<Vec<_>>();
-        text_sections.extend_from_slice(&hotbar_item_text_sections);
+        self.text_sections.extend_from_slice(&hotbar_item_text_sections);
 
         self.health_ui_models = generate_health_ui_models(surface_ctx, self.player.health);
 
-        let cursor_stack_size = 0.1;
+        let aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
+        let cursor_stack_height = hotbar_item_height();
+        let cursor_stack_width = cursor_stack_height / aspect_ratio;
         let cursor_screen_position = vec2((self.mouse_coords.x/surface_ctx.config().width as f32 - 0.5)*2.0, (-self.mouse_coords.y/surface_ctx.config().height as f32 + 0.5)*2.0);
         self.cursor_stack_model = Model::new(vec![
-            UIVertex { position: [cursor_screen_position.x, cursor_screen_position.y, 0.0], tex_coords: [0.0, 1.0], repeat_count: [1.0, 1.0] },
-            UIVertex { position: [cursor_screen_position.x, cursor_screen_position.y+cursor_stack_size, 0.0], tex_coords: [0.0, 0.0], repeat_count: [1.0, 1.0] },
-            UIVertex { position: [cursor_screen_position.x+cursor_stack_size, cursor_screen_position.y, 0.0], tex_coords: [1.0, 1.0], repeat_count: [1.0, 1.0] },
-            UIVertex { position: [cursor_screen_position.x+cursor_stack_size, cursor_screen_position.y+cursor_stack_size, 0.0], tex_coords: [1.0, 0.0], repeat_count: [1.0, 1.0] },
+            UIVertex { position: [cursor_screen_position.x, cursor_screen_position.y-cursor_stack_height, 0.0], tex_coords: [0.0, 1.0], repeat_count: [1.0, 1.0] },
+            UIVertex { position: [cursor_screen_position.x, cursor_screen_position.y, 0.0], tex_coords: [0.0, 0.0], repeat_count: [1.0, 1.0] },
+            UIVertex { position: [cursor_screen_position.x+cursor_stack_width, cursor_screen_position.y-cursor_stack_height, 0.0], tex_coords: [1.0, 1.0], repeat_count: [1.0, 1.0] },
+            UIVertex { position: [cursor_screen_position.x+cursor_stack_width, cursor_screen_position.y, 0.0], tex_coords: [1.0, 0.0], repeat_count: [1.0, 1.0] },
         ], &[0_u16, 2, 1, 2, 3, 1], AABB::zero(), surface_ctx.device());
         self.cursor_stack_subsection_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: [self.item_atlas.subsection_for_position(self.cursor_stack.atlas_coordinates)], alignment: self.cursor_stack_subsection_uniform.value.alignment });
     }
@@ -739,7 +796,7 @@ impl <'s> Game<'s> {
                         },
                     }),
                     Some(wgpu::RenderPassColorAttachment {
-                        resolve_target: None,
+                        resolve_target: Some(&self.deferred_normal_resolve.value.view),
                         view: &self.deferred_normal_output.value.view,
                         depth_slice: None,
                         ops: wgpu::Operations {
@@ -748,7 +805,7 @@ impl <'s> Game<'s> {
                         },
                     }),
                     Some(wgpu::RenderPassColorAttachment {
-                        resolve_target: None,
+                        resolve_target: Some(&self.deferred_worldspace_resolve.value.view),
                         view: &self.deferred_worldspace_output.value.view,
                         depth_slice: None,
                         ops: wgpu::Operations {
@@ -771,6 +828,39 @@ impl <'s> Game<'s> {
             });
             self.render_deferred(surface_ctx, &mut render_pass);
         }
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("SSAO Render Pass"),
+                color_attachments: &[
+                    Some(wgpu::RenderPassColorAttachment {
+                        resolve_target: None,
+                        view: &self.deferred_ssao_output.value.view,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(Color::RED),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+                ],
+                multiview_mask: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                depth_stencil_attachment: None
+            });
+            self.ssao_shader.bind(&mut render_pass);
+            render_pass.set_bind_group(0, &self.deferred_normal_resolve.binding, &[]);
+            render_pass.set_bind_group(1, &self.deferred_worldspace_resolve.binding, &[]);
+            render_pass.set_bind_group(2, &self.screen_info_binding.binding, &[]);
+            render_pass.set_bind_group(3, &self.ssao_kernel_samples.binding, &[]);
+            render_pass.set_bind_group(4, &self.random_texture.binding, &[]);
+            surface_ctx.screen_model().render(&mut render_pass);
+        }
+        for _ in 0..3 {
+            self.blur_axis.set_data(surface_ctx.queue(), [1.0, 0.0]);
+            self.blur_ssao(surface_ctx, &mut encoder);
+            self.blur_axis.set_data(surface_ctx.queue(), [0.0, 1.0]);
+            self.blur_ssao(surface_ctx, &mut encoder);
+        }
         surface_ctx.queue().submit([encoder.finish()]);
     }
 
@@ -781,16 +871,114 @@ impl <'s> Game<'s> {
         for chunk in self.chunk_manager.chunks_sorted(self.camera.eye.into()) {
             if chunk.visible() {
                 //TODO: move camera stuff out of particle manager
-                chunk.render(render_pass, &self.entity_render_manager, &self.item_atlas, &self.chunk_shader, &self.particle_manager.camera_view_binding, &self.particle_manager.camera_projection_binding, &self.atlas_uniform, surface_ctx);
+                chunk.render(render_pass, &self.entity_render_manager, &self.item_atlas, &self.chunk_shader, &self.atlas_uniform, surface_ctx);
             }
         }
 
-        // if let Some(cube_outline_model) = &self.cube_outline_model {
-        //     self.cube_outline_shader.bind(render_pass);
-        //     cube_outline_model.render(render_pass);
-        // }
+        if let Some(cube_outline_model) = &self.cube_outline_model {
+            self.cube_outline_shader.bind(render_pass);
+            cube_outline_model.render(render_pass);
+        }
 
-        // self.particle_manager.render(&self.screen_info_binding, &self.camera, render_pass, surface_ctx);
+        self.particle_manager.render(&self.screen_info_binding, render_pass);
+    }
+
+    fn blur_ssao<'a: 'b, 'b>(&'a mut self, surface_ctx: &'b dyn SurfaceCtx, encoder: &mut CommandEncoder) {
+        std::mem::swap(&mut self.deferred_ssao_output, &mut self.intermediate_ssao_texture);
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("SSAO Blur Render Pass"),
+            color_attachments: &[
+                Some(wgpu::RenderPassColorAttachment {
+                    resolve_target: None,
+                    view: &self.deferred_ssao_output.value.view,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(Color::RED),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })
+            ],
+            multiview_mask: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            depth_stencil_attachment: None
+        });
+        self.ssao_blur_shader.bind(&mut render_pass);
+        render_pass.set_bind_group(0, &self.intermediate_ssao_texture.binding, &[]);
+        render_pass.set_bind_group(1, &self.blur_radius.binding, &[]);
+        render_pass.set_bind_group(2, &self.blur_steps.binding, &[]);
+        render_pass.set_bind_group(3, &self.blur_axis.binding, &[]);
+        render_pass.set_bind_group(4, &self.blur_kernel.binding, &[]);
+        surface_ctx.screen_model().render(&mut render_pass);
+    }
+
+    fn stack_index_at_location<'a>(location: &'a InventoryLocation<'a>) -> Option<usize> {
+        match location.inventory {
+            OpenInventory::PlayerCrafting(_) =>  {
+                if (0..3).contains(&location.y) && (0..3).contains(&location.x) {
+                    let i = location.y * 3 + location.x;
+                    Some(i as usize)
+                } else if location.x == 4 && location.y == 1 {
+                    Some(9)
+                } else {
+                    None
+                }
+            },
+            OpenInventory::PlayerInventory => {
+                let i = location.y * 9 + location.x;
+                Some(i as usize)
+            }
+        }
+    }
+
+    fn stack_at_location<'a>(location: &'a InventoryLocation<'a>, player_inventory: &'a Inventory) -> Option<&'a InventoryItemStack> {
+        if let Some(index) = Self::stack_index_at_location(location) {
+            if location.inventory == &OpenInventory::PlayerInventory {
+                return Some(&player_inventory.items[index])
+            } else {
+                return Some(Self::stack_at_index(index, location.inventory, player_inventory))
+            }
+        } else {
+            return None
+        }
+    }
+
+    fn stack_at_index<'a>(index: usize, inventory: &'a OpenInventory, player_inventory: &'a Inventory) -> &'a InventoryItemStack {
+        match inventory {
+            OpenInventory::PlayerInventory => &player_inventory.items[index],
+            OpenInventory::PlayerCrafting(inventory) => &inventory.items[index],
+        }
+    }
+
+    fn stack_at_index_mut<'a>(index: usize, inventory: &'a mut OpenInventory, player_inventory: &'a mut Inventory) -> &'a mut InventoryItemStack {
+        match inventory {
+            OpenInventory::PlayerInventory => &mut player_inventory.items[index],
+            OpenInventory::PlayerCrafting(inventory) => &mut inventory.items[index],
+        }
+    }
+
+    fn interact_inventory_slot<'a>(location: &'a mut InventoryLocationMut<'a>, player_inventory: &'a mut Inventory, cursor_stack: &mut InventoryItemStack) {
+        match location.inventory {
+            OpenInventory::PlayerInventory => {
+                if let Some(i) = Self::stack_index_at_location(&location.as_ref()) {
+                    std::mem::swap(&mut player_inventory.items[i], cursor_stack);
+                }
+            },
+            OpenInventory::PlayerCrafting(crafting_inventory) => {
+                if location.x == 4 && location.y == 1 {
+                    crafting_inventory.take_crafting_result(cursor_stack);
+                }
+                if (0..3).contains(&location.x) && (0..3).contains(&location.y) {
+                    if let Some(i) = Self::stack_index_at_location(&location.as_ref()) {
+                        let stack = Self::stack_at_index_mut(i, location.inventory, player_inventory);
+                        std::mem::swap(stack, cursor_stack);
+                        if let Some(inventory) = location.inner_inventory() {
+                            inventory.calculate_crafting_result();
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -843,4 +1031,28 @@ impl Binding for ScreenInfo {
             wgsl_types: vec!["ScreenInfo".into()]
         }    
     }
+}
+
+#[repr(C)]
+#[derive(Pod, Zeroable, Copy, Clone)]
+struct BlurKernel {
+    value: [[f32; 4]; BLUR_STEPS as usize],
+}
+
+impl WgslType for BlurKernel {
+    fn wgsl_name() -> String {
+        "BlurKernel".into()
+    }
+}
+
+fn generate_blur_kernel() -> BlurKernel {
+    let mut kernel = [[0.0; 4]; BLUR_STEPS as usize];
+    let stdev = (BLUR_STEPS as f32 - 1.0)/(2.0 * 1.96);
+    let fract = 1.0 / (2.0 * PI * stdev.powi(2)).sqrt();
+    for i in 0..kernel.len() {
+        let x = i as f32 - (BLUR_STEPS-1) as f32 / 2.0;
+        let g = fract*std::f32::consts::E.powf(-x.powi(2)/(2.0*stdev.powi(2)));
+        kernel[i] = [g; 4];
+    }
+    BlurKernel { value: kernel }
 }

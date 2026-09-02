@@ -3,6 +3,7 @@ screen_info: $0;
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4f,
+    @location(1) worldspace: vec4f,
 }
 
 struct InstanceInput {
@@ -27,10 +28,15 @@ fn vs_main(
     var out: VertexOutput;
     out.clip_position = screen_info.camera.view_proj * model_matrix * vec4<f32>(model.position.xyz, 1.0);
     out.color = model.color;
+    out.worldspace = screen_info.camera.view * model_matrix * vec4<f32>(model.position.xyz, 1.0);
     return out;
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.color;
+fn fs_main(in: VertexOutput) -> DeferredFragmentOutput {
+    var out: DeferredFragmentOutput;
+    out.color = in.color;
+    out.normal = vec4f(0.0);
+    out.worldspace = in.worldspace;
+    return out;
 }

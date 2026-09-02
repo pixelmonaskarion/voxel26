@@ -1,3 +1,5 @@
+use core::panic;
+
 use bespoke_engine::{binding::WgslType, surface_context::SurfaceCtx, texture::Texture};
 use bytemuck::{Pod, Zeroable};
 use cgmath::{InnerSpace, vec3};
@@ -40,7 +42,7 @@ pub fn generate_random_texture(surface_ctx: &dyn SurfaceCtx, width: u32, height:
                 rand::random_range(0.0_f32..1.0) * 2.0 - 1.0,
                 0.0,
             );
-            image.put_pixel(x, y, Rgba(rotation.extend(1.0).into()));
+            image.put_pixel(x, y, Rgba(rotation.extend(0.0).into()));
         }
     }
     let texture = Texture::from_image(surface_ctx.device(), surface_ctx.queue(), &DynamicImage::ImageRgba32F(image), Some("Random Texture"), Some(format), None, None, None).unwrap();

@@ -1,7 +1,9 @@
-use bespoke_engine::{InstanceTrait, binding::{Descriptor, UniformBinding}, camera::Camera, compute::{ComputeOutput, ComputeShader}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::load_resource_string, shader::{Shader, ShaderConfig, ShaderType}, surface_context::SurfaceCtx, window::BasicVertex};
+use std::time::Duration;
+
+use bespoke_engine::{InstanceTrait, binding::{Descriptor, UniformBinding}, compute::{ComputeOutput, ComputeShader}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::load_resource_string, shader::{Shader, ShaderConfig, ShaderType}, surface_context::SurfaceCtx, window::BasicVertex};
 use bytemuck::{Pod, Zeroable, bytes_of, checked::from_bytes};
 use cgmath::Vector3;
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, RenderPass, ShaderStages, wgt::BufferDescriptor};
+use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, RenderPass, ShaderStages, TextureFormat, wgt::BufferDescriptor};
 
 use crate::game::ScreenInfo;
 
@@ -10,14 +12,13 @@ pub struct ParticleManager<'a> {
     particles_bind_group: BindGroup,
     particles_buffer2: Buffer,
     particles2_bind_group: BindGroup,
+    delta_seconds_uniform: UniformBinding<f32>,
     flip: bool,
     pending_additions: Vec<Particle>,
     instances_buffer: Buffer,
     instances_bind_group: BindGroup,
     num_instances: u32,
     num_instances_output: ComputeOutput,
-    pub camera_view_binding: UniformBinding<[[f32; 4]; 4]>,
-    pub camera_projection_binding: UniformBinding<[[f32; 4]; 4]>,
     particle_model: Model,
 
     update_shader: ComputeShader,
@@ -26,7 +27,7 @@ pub struct ParticleManager<'a> {
 }
 
 impl <'a> ParticleManager<'a> {
-    pub fn new(surface_ctx: &dyn SurfaceCtx, screen_info_binding: &UniformBinding<ScreenInfo>) -> Self {
+    pub fn new(surface_ctx: &dyn SurfaceCtx, screen_info_binding: &UniformBinding<ScreenInfo>, deferred_formats: Vec<TextureFormat>) -> Self {
         let max_particles = 1000;
         let particles_buffer = surface_ctx.device().create_buffer(&BufferDescriptor {
             label: Some("Particles buffer"),
@@ -88,14 +89,13 @@ impl <'a> ParticleManager<'a> {
             ]
         });
 
+        let delta_seconds_uniform = UniformBinding::new(surface_ctx.device(), "Delta Seconds", 0.0, None);
+
         let num_instances_output = ComputeOutput::new(size_of::<u32>() as u64, &surface_ctx.device());
 
-        let camera_view_binding = UniformBinding::new(surface_ctx.device(), "Camera View", [[0.0; 4]; 4], None);
-        let camera_projection_binding = UniformBinding::new(surface_ctx.device(), "Camera Projection", [[0.0; 4]; 4], None);
-
-        let update_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_update_shader.wgsl"), vec![&particles_layout, &particles_layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "Particle".into())], surface_ctx.device());
+        let update_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_update_shader.wgsl"), vec![&particles_layout, &particles_layout, &delta_seconds_uniform.layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "Particle".into()), &delta_seconds_uniform.shader_type], surface_ctx.device());
         let instance_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_instance_shader.wgsl"), vec![&particles_layout, &particles_layout, &num_instances_output.layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "ParticleInstance".into())], surface_ctx.device());
-        let render_shader = Shader::new("res/shaders/particle_renderer.wgsl", surface_ctx.device(), vec![surface_ctx.config().format; 3], vec![&screen_info_binding.layout, &camera_view_binding.layout, &camera_projection_binding.layout], vec![&screen_info_binding.shader_type, &camera_view_binding.shader_type, &camera_projection_binding.shader_type], vec![BasicVertex::desc(), ParticleInstance::desc()], ShaderConfig::default());
+        let render_shader = Shader::new("res/shaders/particle_renderer.wgsl", surface_ctx.device(), deferred_formats, vec![&screen_info_binding.layout], vec![&screen_info_binding.shader_type], vec![BasicVertex::desc(), ParticleInstance::desc()], ShaderConfig::default());
 
         let size = 0.1;
         let particle_model = Model::new(vec![
@@ -108,14 +108,13 @@ impl <'a> ParticleManager<'a> {
             instances_buffer,
             instance_shader,
             instances_bind_group,
+            delta_seconds_uniform,
             num_instances: 0,
             num_instances_output,
             particles_buffer,
             particles_bind_group,
             particles_buffer2,
             particles2_bind_group,
-            camera_projection_binding,
-            camera_view_binding,
             pending_additions: vec![],
             render_shader,
             update_shader,
@@ -124,7 +123,7 @@ impl <'a> ParticleManager<'a> {
         }
     }
 
-    pub fn run_step(&mut self, surface_ctx: &dyn SurfaceCtx) {
+    pub fn run_step(&mut self, delta_time: Duration, surface_ctx: &dyn SurfaceCtx) {
         self.add_pending_particles(surface_ctx);
         let in_buffer = if self.flip {
             &self.particles2_bind_group
@@ -136,20 +135,17 @@ impl <'a> ParticleManager<'a> {
         } else {
             &self.particles2_bind_group
         };
-        self.update_shader.run_once(vec![in_buffer, out_buffer], [10; 3], surface_ctx.device(), surface_ctx.queue());
+        self.delta_seconds_uniform.set_data(surface_ctx.queue(), delta_time.as_secs_f32());
+        self.update_shader.run_once(vec![in_buffer, out_buffer, &self.delta_seconds_uniform.binding], [10; 3], surface_ctx.device(), surface_ctx.queue());
         self.instance_shader.run_once(vec![&out_buffer, &self.instances_bind_group, &self.num_instances_output.binding], [10; 3], surface_ctx.device(), surface_ctx.queue());
         self.num_instances = *bytemuck::from_bytes::<u32>(&self.num_instances_output.read(surface_ctx.device(), surface_ctx.queue()));
         surface_ctx.queue().write_buffer(&self.num_instances_output.buffer, 0, &vec![0; self.num_instances_output.buffer.size() as usize]);
         self.flip = !self.flip;
     }
 
-    pub fn render<'s: 'b, 'b>(&'s mut self, screen_info_binding: &UniformBinding<ScreenInfo>, camera: &Camera, render_pass: &mut RenderPass<'b>, surface_ctx: &'s dyn SurfaceCtx) {
+    pub fn render<'s: 'b, 'b>(&'s mut self, screen_info_binding: &UniformBinding<ScreenInfo>, render_pass: &mut RenderPass<'b>) {
         self.render_shader.bind(render_pass);
-        self.camera_view_binding.set_data(surface_ctx.queue(), camera.view().into());
-        self.camera_projection_binding.set_data(surface_ctx.queue(), camera.projection().into());
         render_pass.set_bind_group(0, &screen_info_binding.binding, &[]);
-        render_pass.set_bind_group(1, &self.camera_view_binding.binding, &[]);
-        render_pass.set_bind_group(2, &self.camera_projection_binding.binding, &[]);
         self.particle_model.render_instances(render_pass, &self.instances_buffer, 0..self.num_instances);
     }
 
@@ -183,11 +179,11 @@ impl <'a> ParticleManager<'a> {
         let mut cursor = 0;
         'p: while let Some(particle) = self.pending_additions.pop() {
             while cursor < in_buffer.size() as usize {
-                if *from_bytes::<u32>(&bytes[cursor+size_of::<[f32; 13]>()..cursor+size_of::<[f32; 13]>()+4]) == 0 {
+                if *from_bytes::<u32>(&bytes[cursor+size_of::<[f32; 1]>()..cursor+size_of::<[f32; 1]>()+4]) == 0 {
                     let raw = ParticleRaw {
                         particle_type: particle.particle_type.shader_u32(),
                         color: particle.color,
-                        lifetime: particle.lifetime,
+                        lifetime: particle.lifetime.as_secs_f32(),
                         position: particle.position,
                         velocity: [particle.velocity[0], particle.velocity[1], particle.velocity[2], 0.0],
                         padding: [0.0; 2],
@@ -205,20 +201,20 @@ impl <'a> ParticleManager<'a> {
 pub struct Particle {
     pub position: [f32; 4],
     pub color: [f32; 4],
-    pub lifetime: u32,
+    pub lifetime: Duration,
     pub velocity: [f32; 3],
     pub particle_type: ParticleType,
 }
 
-#[derive(Pod, Clone, Copy, Zeroable)]
+#[derive(Pod, Clone, Copy, Zeroable, Debug)]
 #[repr(C)]
 struct ParticleRaw {
+    lifetime: f32,
+    particle_type: u32,
+    padding: [f32; 2],
     position: [f32; 4],
     color: [f32; 4],
     velocity: [f32; 4],
-    lifetime: u32,
-    particle_type: u32,
-    padding: [f32; 2],
 }
 
 pub enum ParticleType {

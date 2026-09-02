@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bespoke_engine::{binding::UniformBinding, surface_context::SurfaceCtx, texture::Texture};
-use cgmath::{Vector3, vec3, InnerSpace};
+use cgmath::{InnerSpace, Vector3, vec2, vec3};
 
 use crate::{blocks::solid_block, chunk::ChunkManager, inventory::{Inventory, ItemAtlas}};
 
@@ -24,7 +24,7 @@ impl Player {
             time_since_ground: Duration::new(2, 0),
             movement_mode: 0,
             break_cooldown: Duration::ZERO,
-            inventory: Inventory::new(item_atlas, block_atlas, surface_ctx),
+            inventory: Inventory::empty_size(4*9, item_atlas, block_atlas, surface_ctx),
             health: 20.0,
         };
         _self

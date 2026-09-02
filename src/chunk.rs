@@ -77,7 +77,7 @@ impl Chunk {
         }
     }
 
-    pub fn render<'s: 'b, 'b>(&'s self, render_pass: &mut RenderPass<'b>, entity_render_manager: &'b EntityRenderManager, item_atlas: &ItemAtlas, chunk_shader: &'b Shader<'b>, camera_view: &UniformBinding<[[f32; 4]; 4]>, camera_projection: &UniformBinding<[[f32; 4]; 4]>, atlas_binding: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) {
+    pub fn render<'s: 'b, 'b>(&'s self, render_pass: &mut RenderPass<'b>, entity_render_manager: &'b EntityRenderManager, item_atlas: &ItemAtlas, chunk_shader: &'b Shader<'b>, atlas_binding: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) {
         chunk_shader.bind(render_pass);
         render_pass.set_bind_group(1, &atlas_binding.binding, &[]);
         if let Some(model) = &self.model {
@@ -98,9 +98,7 @@ impl Chunk {
                 match *entity_type {
                     EntityType::Item => {
                         entity_render_manager.item_shader.bind(render_pass);
-                        render_pass.set_bind_group(1, &camera_view.binding, &[]);
-                        render_pass.set_bind_group(2, &camera_projection.binding, &[]);
-                        render_pass.set_bind_group(3, &item_atlas.texture.binding, &[]);
+                        render_pass.set_bind_group(1, &item_atlas.texture.binding, &[]);
                     }
                     _ => {}
                 }
@@ -668,22 +666,22 @@ impl ChunkManager {
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + (x+w) as f32, chunk_z_f32 + (y+h) as f32, c[3]], 
                                         color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
-                                        normal: [1.0, 0.0, 0.0, 0.0]
+                                        normal: [-1.0, 0.0, 0.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + (x+w) as f32, chunk_z_f32 + y as f32, c[3]], 
                                         color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, w as f32, h as f32], 
-                                        normal: [1.0, 0.0, 0.0, 0.0],
+                                        normal: [-1.0, 0.0, 0.0, 0.0],
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + x as f32, chunk_z_f32 + (y+h) as f32, c[3]], 
                                         color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
-                                        normal: [1.0, 0.0, 0.0, 0.0]
+                                        normal: [-1.0, 0.0, 0.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + x as f32, chunk_z_f32 + y as f32, c[3]], 
                                         color: [tex_coords_offset_x, tex_coords_offset_y, w as f32, h as f32], 
-                                        normal: [1.0, 0.0, 0.0, 0.0]
+                                        normal: [-1.0, 0.0, 0.0, 0.0]
                                     },
                                 ]);
                             } else {
@@ -718,22 +716,22 @@ impl ChunkManager {
                                     Vertex {
                                         position: [chunk_x_f32 + (y+h) as f32, chunk_y_f32 + slice as f32+direction_f32, chunk_z_f32 + (x+w) as f32, c[3]], 
                                         color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, h as f32, w as f32], 
-                                        normal: [0.0, 1.0, 0.0, 0.0]
+                                        normal: [0.0, -1.0, 0.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + y as f32, chunk_y_f32 + slice as f32+direction_f32, chunk_z_f32 + (x+w) as f32, c[3]], 
                                         color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, h as f32, w as f32], 
-                                        normal: [0.0, 1.0, 0.0, 0.0]
+                                        normal: [0.0, -1.0, 0.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + (y+h) as f32, chunk_y_f32 + slice as f32+direction_f32, chunk_z_f32 + x as f32, c[3]],
                                         color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, h as f32, w as f32], 
-                                        normal: [0.0, 1.0, 0.0, 0.0]
+                                        normal: [0.0, -1.0, 0.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + y as f32, chunk_y_f32 + slice as f32+direction_f32, chunk_z_f32 + x as f32, c[3]], 
                                         color: [tex_coords_offset_x, tex_coords_offset_y, h as f32, w as f32], 
-                                        normal: [0.0, 1.0, 0.0, 0.0]
+                                        normal: [0.0, -1.0, 0.0, 0.0]
                                     },
                                 ]);
                             } else {
@@ -767,22 +765,22 @@ impl ChunkManager {
                                     Vertex {
                                         position: [chunk_x_f32 + x as f32, chunk_y_f32 + (y+h) as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
                                         color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
-                                        normal: [0.0, 0.0, 1.0, 0.0]
+                                        normal: [0.0, 0.0, -1.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + (x+w) as f32, chunk_y_f32 + (y+h) as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
                                         color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
-                                        normal: [0.0, 0.0, 1.0, 0.0]
+                                        normal: [0.0, 0.0, -1.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + x as f32, chunk_y_f32 + y as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
                                         color: [tex_coords_offset_x, tex_coords_offset_y, w as f32, h as f32], 
-                                        normal: [0.0, 0.0, 1.0, 0.0]
+                                        normal: [0.0, 0.0, -1.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + (x+w) as f32, chunk_y_f32 + y as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
                                         color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, w as f32, h as f32], 
-                                        normal: [0.0, 0.0, 1.0, 0.0]
+                                        normal: [0.0, 0.0, -1.0, 0.0]
                                     },
                                     
                                 ]);

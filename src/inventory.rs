@@ -1,26 +1,31 @@
 use std::collections::HashMap;
 
-use bespoke_engine::{binding::{Descriptor, UniformBinding}, camera::OrthographicCamera, model::Render, shader::{Shader, ShaderConfig}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture}, window::MULTISAMPLE_COUNT};
+use bespoke_engine::{binding::{Descriptor, UniformBinding}, camera::OrthographicCamera, model::Render, shader::{Shader, ShaderConfig}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture}};
 use cgmath::{Matrix4, Vector2, vec2, vec3};
 use wgpu::RenderPassDepthStencilAttachment;
 
 use crate::{block_models::block_model, blocks::{AIR, Block, NOT_RENDERED_LAYER}, game::{ScreenInfo, Vertex}};
 
+#[derive(PartialEq, Eq, Debug)]
 pub struct Inventory {
     pub items: Vec<InventoryItemStack>,
     pub selected: usize,
 }
 
 impl Inventory {
-    pub fn new(item_atlas: &mut ItemAtlas, block_atlas: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) -> Self {
+    pub fn empty_size(size: usize, item_atlas: &mut ItemAtlas, block_atlas: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) -> Self {
         Self {
-            items: vec![InventoryItemStack::new(ItemStack::new(Item::Block(AIR), 0), item_atlas, block_atlas, surface_ctx); 9*4],
+            items: vec![InventoryItemStack::new(ItemStack::new(Item::Block(AIR), 0), item_atlas, block_atlas, surface_ctx); size],
             selected: 0,
         }
     }
 
     pub fn selected_item(&self) -> &InventoryItemStack {
         &self.items[self.selected]
+    }
+
+    pub fn selected_item_mut(&mut self) -> &mut InventoryItemStack {
+        &mut self.items[self.selected]
     }
 
     pub fn add(&mut self, item_stack: &InventoryItemStack) -> bool {
@@ -36,9 +41,17 @@ impl Inventory {
         }
         return false;
     }
+
+    pub fn calculate_crafting_result(&mut self) {
+
+    }
+
+    pub fn take_crafting_result(&mut self, cursor_stack: &mut InventoryItemStack) {
+        
+    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct InventoryItemStack {
     pub stack: ItemStack,
     pub atlas_coordinates: Vector2<u32>,
@@ -53,13 +66,18 @@ impl InventoryItemStack {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ItemStack {
     pub item: Item,
     pub count: i32,
 }
 
 impl ItemStack {
+    pub const EMPTY: Self = ItemStack {
+        item: Item::Block(AIR),
+        count: 0,
+    };
+
     pub fn new(item: Item, count: i32) -> Self {
         Self {
             count,
@@ -68,7 +86,7 @@ impl ItemStack {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Item {
     Block(Block),
 }

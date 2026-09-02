@@ -57,17 +57,6 @@ pub const DIRT: Block = Block {
     cull: true,
 };
 
-pub const GOLD: Block = Block {
-    id: 7,
-    solid: true,
-    color: [0.0, 0.0, 0.0, 1.0],
-    atlas_x: 6,
-    atlas_y: 2,
-    has_model: false,
-    layer: SOLID_LAYER,
-    cull: true,
-};
-
 pub const ROCK: Block = Block {
     id: 5,
     solid: false,
@@ -90,6 +79,28 @@ pub const LEAVES: Block = Block {
     cull: false,
 };
 
+pub const GOLD: Block = Block {
+    id: 7,
+    solid: true,
+    color: [0.0, 0.0, 0.0, 1.0],
+    atlas_x: 6,
+    atlas_y: 2,
+    has_model: false,
+    layer: SOLID_LAYER,
+    cull: true,
+};
+
+pub const WOOD: Block = Block {
+    id: 8,
+    solid: true,
+    color: [0.0, 0.0, 0.0, 1.0],
+    atlas_x: 2,
+    atlas_y: 1,
+    has_model: false,
+    layer: SOLID_LAYER,
+    cull: true,
+};
+
 pub const BLOCKS: phf::Map<BlockID, Block> = phf_map! {
     0u16 => AIR,
     1 => GRASS,
@@ -99,6 +110,7 @@ pub const BLOCKS: phf::Map<BlockID, Block> = phf_map! {
     5 => ROCK,
     6 => LEAVES,
     7 => GOLD,
+    8 => WOOD,
 };
 
 pub const ATLAS_X_BLOCKS: u32 = 16;

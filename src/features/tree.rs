@@ -1,6 +1,6 @@
 use rand::{Rng, RngExt};
 
-use crate::{blocks::{DIRT, LEAVES}, features::Feature};
+use crate::{blocks::{LEAVES, WOOD}, features::Feature};
 
 pub struct TreeFeature {
 
@@ -22,7 +22,7 @@ impl Feature for TreeFeature {
             }
         }
         for l in 0..length {
-            set_block(x, y+l, z, DIRT.id);
+            set_block(x, y+l, z, WOOD.id);
         }
     }
 }

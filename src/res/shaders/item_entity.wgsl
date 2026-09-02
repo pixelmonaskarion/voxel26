@@ -1,10 +1,6 @@
 screen_info: $0;
-@group(1) @binding(0)
-var<uniform> camera_view: mat4x4f;
-@group(2) @binding(0)
-var<uniform> camera_projection: mat4x4f;
-t_atlas: $3,0;
-s_atlas: $3,1;
+t_atlas: $1,0;
+s_atlas: $1,1;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -21,6 +17,7 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) tex_coords: vec2<f32>,
     @location(1) atlas_subsection: vec4f,
+    @location(2) worldspace: vec4f,
 };
 
 @vertex
@@ -47,7 +44,7 @@ fn vs_main(
     );
 
     // 3. Transform the object's center into view space
-    let view_center = camera_view * world_position;
+    let view_center = screen_info.camera.view * world_position;
 
     // 4. Apply the scaled local vertex position *directly in view space*.
     // This effectively ignores the model_matrix's rotation and aligns
@@ -59,18 +56,22 @@ fn vs_main(
 
     // 5. Project the final view-space position to clip space
     var out: VertexOutput;
-    out.clip_position = camera_projection * final_view_pos;
+    out.clip_position = screen_info.camera.proj * final_view_pos;
     out.tex_coords = model.tex_coords;
     out.atlas_subsection = instance.atlas_subsection;
+    out.worldspace = final_view_pos;
     return out;
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> DeferredFragmentOutput {
     let subsection = in.atlas_subsection;
-    let out = textureSample(t_atlas, s_atlas, vec2f(in.tex_coords.x*subsection.z+subsection.x, in.tex_coords.y*subsection.w+subsection.y));
-    if out.w == 0.0 {
+    var out: DeferredFragmentOutput;
+    out.color = textureSample(t_atlas, s_atlas, vec2f(in.tex_coords.x*subsection.z+subsection.x, in.tex_coords.y*subsection.w+subsection.y));
+    if out.color.w == 0.0 {
         discard;
     }
+    out.normal = vec4f(0.0);
+    out.worldspace = in.worldspace;
     return out;
 }

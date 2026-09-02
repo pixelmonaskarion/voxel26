@@ -3,13 +3,14 @@ use std::time::Duration;
 use bespoke_engine::{binding::{Binding, Descriptor, create_layout}, culling::AABB, model::{Model, ToRaw}, shader::{Shader, ShaderConfig}, surface_context::SurfaceCtx, texture::{Texture, TextureLayoutConfig}, window::BasicVertex};
 use bytemuck::bytes_of;
 use cgmath::{Vector3, vec3};
-use wgpu::{Buffer, BufferUsages, wgt::BufferDescriptor};
+use wgpu::{Buffer, BufferUsages, TextureFormat, wgt::BufferDescriptor};
 
 use crate::{chunk::ChunkManager, game::ScreenInfo, inventory::{InventoryItemStack, ItemAtlas}, util};
 
 pub struct Entity {
     pub position: Vector3<f32>,
     pub velocity: Vector3<f32>,
+    pub time_alive: Duration,
     pub entity_type: TypedEntity,
 }
 
@@ -28,6 +29,7 @@ impl Entity {
     }
 
     pub fn update(&mut self, world: &ChunkManager, delta_time: Duration) {
+        self.time_alive += delta_time;
         self.velocity.x *= 0.9;
         self.velocity.z *= 0.9;
         self.velocity -= vec3(0.0, 20.0 * delta_time.as_secs_f32(), 0.0);
@@ -66,7 +68,7 @@ impl Entity {
         match &self.entity_type {
             TypedEntity::Item { stack } => {
                 let atlas_subsection = item_atlas.subsection_for_position(stack.atlas_coordinates);
-                Some(ItemInstance { position: self.position.extend(1.0).into(), texture_offsets: [0.0; 4], atlas_subsection }.to_raw())
+                Some(ItemInstance { position: (self.position+vec3(0.0, (self.time_alive.as_secs_f32().sin()+1.0)*0.05, 0.0)).extend(1.0).into(), texture_offsets: [0.0; 4], atlas_subsection }.to_raw())
             },
             TypedEntity::Marker => {
                 None
@@ -89,7 +91,7 @@ pub struct EntityRenderManager<'a> {
 }
 
 impl <'a> EntityRenderManager<'a> {
-    pub fn new(surface_ctx: &dyn SurfaceCtx) -> Self {
+    pub fn new(surface_ctx: &dyn SurfaceCtx, deferred_formats: Vec<TextureFormat>) -> Self {
         let size = 0.2;
         let item_model = Model::new(vec![
             BasicVertex { position: [-size, -size, 0.0], tex_coords: [0.0, 1.0] },
@@ -97,7 +99,7 @@ impl <'a> EntityRenderManager<'a> {
             BasicVertex { position: [size, -size, 0.0], tex_coords: [1.0, 1.0] },
             BasicVertex { position: [size, size, 0.0], tex_coords: [1.0, 0.0] },
         ], &[0_u16, 2, 1, 2, 3, 1], AABB { dimensions: [1.0, 1.0, 0.0] }, surface_ctx.device());
-        let item_shader = Shader::new("res/shaders/item_entity.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&create_layout::<ScreenInfo>((), surface_ctx.device()), &create_layout::<[[f32; 4]; 4]>((), surface_ctx.device()), &create_layout::<[[f32; 4]; 4]>((), surface_ctx.device()), &create_layout::<Texture>(TextureLayoutConfig::default(), surface_ctx.device())], vec![&ScreenInfo::shader_type(()), &<[[f32; 4]; 4]>::shader_type(()), &<[[f32; 4]; 4]>::shader_type(()), &Texture::shader_type(TextureLayoutConfig::default())], vec![BasicVertex::desc(), ItemInstance::desc()], ShaderConfig::default());
+        let item_shader = Shader::new("res/shaders/item_entity.wgsl", surface_ctx.device(), deferred_formats.clone(), vec![&create_layout::<ScreenInfo>((), surface_ctx.device()), &create_layout::<Texture>(TextureLayoutConfig::default(), surface_ctx.device())], vec![&ScreenInfo::shader_type(()), &Texture::shader_type(TextureLayoutConfig::default())], vec![BasicVertex::desc(), ItemInstance::desc()], ShaderConfig::default());
         let instance_buffer = surface_ctx.device().create_buffer(&BufferDescriptor {
             label: Some("Entity Instance Buffer"),
             mapped_at_creation: false,
