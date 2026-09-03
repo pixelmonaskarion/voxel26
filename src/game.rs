@@ -1,4 +1,4 @@
-use std::{collections::HashMap, f32::consts::PI, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, f32::consts::PI, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::{ResourceConst, load_resource, load_resource_string}, shader::{PostProcessShaderInit, Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture, TextureLayoutConfig}, window::{BasicVertex, MULTISAMPLE_COUNT, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
 use bytemuck::{NoUninit, Pod, Zeroable, bytes_of};
@@ -6,7 +6,7 @@ use cgmath::{InnerSpace, MetricSpace, Vector2, Vector3, Zero, vec2, vec3};
 use wgpu::{Color, CommandEncoder, Features, Limits, RenderPass, TextureFormat, wgt::CommandEncoderDescriptor};
 use wgpu_text::{BrushBuilder, TextBrush, glyph_brush::{Layout, OwnedSection, OwnedText, ab_glyph::FontVec}};
 use winit::{dpi::PhysicalPosition, event::{KeyEvent, Modifiers, MouseButton, TouchPhase, WindowEvent}, keyboard::{KeyCode, PhysicalKey::Code}};
-use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, GENERATED_BLOCK_ATLAS_PNG, RES_SHADERS_BLUR_WGSL, RES_SHADERS_CHUNK_WGSL, RES_SHADERS_DEFERRED_COMBINE_WGSL, RES_SHADERS_ITEM_UI_WGSL, RES_SHADERS_POST_PROCESS_WGSL, RES_SHADERS_SSAO_WGSL, RES_SHADERS_UI_WGSL, RESOURCES, blocks::{AIR, get_block}, chunk::{CHUNK_SIZE, ChunkManager}, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, inventory::{Inventory, InventoryItemStack, ItemAtlas, ItemStack}, items::ItemProperties, particles::{Particle, ParticleManager, ParticleType}, player::Player, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, ui::{InventoryLocation, InventoryLocationMut, InventoryModel, OpenInventory, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, inventory_location, inventory_physical_size, mouse_tile_coords, text_sections_for_inventory}, util::{self, chunk_for_block_position, chunk_for_world_position}};
+use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, RES_SHADERS_BLUR_WGSL, RES_SHADERS_CHUNK_WGSL, RES_SHADERS_DEFERRED_COMBINE_WGSL, RES_SHADERS_ITEM_UI_WGSL, RES_SHADERS_POST_PROCESS_WGSL, RES_SHADERS_SSAO_WGSL, RES_SHADERS_UI_WGSL, RESOURCES, blocks::AIR, chunk::{CHUNK_SIZE, ChunkManager}, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, inventory::{Inventory, InventoryItemStack, ItemStack}, items::ItemProperties, particles::{Particle, ParticleManager, ParticleType}, player::Player, registries::Registries, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, ui::{InventoryLocation, InventoryLocationMut, InventoryModel, OpenInventory, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, inventory_location, inventory_physical_size, mouse_tile_coords, text_sections_for_inventory}, util::{self, chunk_for_block_position, chunk_for_world_position}};
 
 const BLUR_STEPS: i32 = 11;
 
@@ -49,9 +49,9 @@ pub struct Game<'a> {
 
     chunk_manager: ChunkManager,
     chunk_shader: Shader<'a>,
-    atlas_uniform: UniformBinding<Texture>,
     entity_render_manager: EntityRenderManager<'a>,
-    item_atlas: ItemAtlas<'a>,
+
+    registries: Arc<Registries>,
 
     cube_outline_shader: Shader<'a>,
     cube_outline_model: Option<Model>,
@@ -159,22 +159,23 @@ impl <'a> Game<'a> {
         let blur_axis = UniformBinding::new(surface_ctx.device(), "Blur Axis", [0.0; 2], None);
         let blur_kernel = UniformBinding::new(surface_ctx.device(), "Blur Kernel", generate_blur_kernel(), None);
         let ssao_blur_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_BLUR_WGSL, formats: vec![ssao_format], uniforms: vec![&intermediate_ssao_texture, &blur_radius, &blur_steps, &blur_axis, &blur_kernel], vertex_buffers: vec![BasicVertex::desc()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
+        
+        let mut registries = Arc::new(Registries::new(surface_ctx));
 
-        let mut chunk_manager = ChunkManager::new(surface_ctx);
+        let mut chunk_manager = ChunkManager::new(registries.clone(), surface_ctx);
         chunk_manager.get_chunk_or_create([0; 3]);
         chunk_manager.generate_blocks([0; 3], [0.0; 3]);
 
         //TODO: don't assume they are all the same width and height
         let shader_atlas_x_blocks = ResourceConst { name: "ATLAS_X_BLOCKS".into(), rtype: "u32".into(), value: (BLOCK_ATLAS_PNG_WIDTH / BLOCK_ATLAS_PNG_DIRT_SECTION.width).to_string() };
         let shader_atlas_y_blocks  = ResourceConst { name: "ATLAS_Y_BLOCKS".into(), rtype: "u32".into(), value: (BLOCK_ATLAS_PNG_HEIGHT / BLOCK_ATLAS_PNG_DIRT_SECTION.height).to_string() };
-        println!("{shader_atlas_x_blocks:?}");
-        println!("{shader_atlas_y_blocks:?}");
+
         let shader_atlas_x_ui = ResourceConst { name: "ATLAS_X_BLOCKS".into(), rtype: "u32".into(), value: 16.to_string() };
         let shader_atlas_y_ui  = ResourceConst { name: "ATLAS_Y_BLOCKS".into(), rtype: "u32".into(), value: 16.to_string() };
 
         let post_processing_shader = Shader::new(PostProcessShaderInit { resource: RES_SHADERS_POST_PROCESS_WGSL, formats: vec![surface_ctx.config().format], binding_layouts: vec![create_layout::<Texture>(TextureLayoutConfig::default(), surface_ctx.device())], shader_types: vec![Texture::shader_type(TextureLayoutConfig::default())], ..Default::default() }, surface_ctx.device());
-        let atlas_uniform = UniformBinding::new(surface_ctx.device(), "Atlas", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &GENERATED_BLOCK_ATLAS_PNG.load(), "Atlas", None, None).unwrap(), None);
-        let chunk_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_CHUNK_WGSL, formats: deferred_formats.clone(), uniforms: vec![&screen_info_binding, &atlas_uniform], vertex_buffers: vec![Vertex::desc()], shader_consts: vec![shader_atlas_x_blocks.clone(), shader_atlas_y_blocks.clone()], line_mode: wgpu::PolygonMode::Fill, ..Default::default() }, surface_ctx.device());
+        
+        let chunk_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_CHUNK_WGSL, formats: deferred_formats.clone(), uniforms: vec![&screen_info_binding, &registries.block_atlas_texture], vertex_buffers: vec![Vertex::desc()], shader_consts: vec![shader_atlas_x_blocks.clone(), shader_atlas_y_blocks.clone()], line_mode: wgpu::PolygonMode::Fill, ..Default::default() }, surface_ctx.device());
 
         let cube_outline_shader = cube_outline_shader(surface_ctx.device(), deferred_formats.clone(), &screen_info_binding);
         let cube_outline_model = None;
@@ -185,8 +186,8 @@ impl <'a> Game<'a> {
         let ui_texture_uniform = UniformBinding::new(surface_ctx.device(), "UI Textures", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &load_resource("res/ui.png").unwrap(), "UI", None, None).unwrap(), None);
         let ui_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_UI_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&ui_texture_uniform], vertex_buffers: vec![UIVertex::desc()], shader_consts: vec![shader_atlas_x_ui.clone(), shader_atlas_y_ui.clone()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
         let hotbar_atlas_subsections_uniform = UniformBinding::new(surface_ctx.device(), "Atlas Subsection", DynamicOffsetUniform { values: [[0.0; 4]; 9], alignment: surface_ctx.device().limits().min_uniform_buffer_offset_alignment as usize }, None);
-        let mut item_atlas = ItemAtlas::new(surface_ctx, &atlas_uniform, vec![shader_atlas_x_blocks.clone(), shader_atlas_y_blocks.clone()]);
-        let item_ui_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_ITEM_UI_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&item_atlas.texture, &hotbar_atlas_subsections_uniform], vertex_buffers: vec![UIVertex::desc()], shader_consts: vec![shader_atlas_x_ui.clone(), shader_atlas_y_ui.clone()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
+        
+        let item_ui_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_ITEM_UI_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&registries.item_atlas_registry.texture, &hotbar_atlas_subsections_uniform], vertex_buffers: vec![UIVertex::desc()], shader_consts: vec![shader_atlas_x_ui.clone(), shader_atlas_y_ui.clone()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
 
         let crosshair_model = generate_crosshair_ui_model(surface_ctx);
 
@@ -194,7 +195,7 @@ impl <'a> Game<'a> {
         let entity_render_manager = EntityRenderManager::new(surface_ctx, deferred_formats.clone());
         
         let text_brush = BrushBuilder::using_font(FontVec::try_from_vec(load_resource("res/unifont.ttf").unwrap()).unwrap()).build(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, surface_ctx.config().format);
-        let cursor_stack = InventoryItemStack::new(ItemStack::EMPTY, &mut item_atlas, &atlas_uniform, surface_ctx);
+        let cursor_stack = InventoryItemStack::new(ItemStack::EMPTY, &mut registries);
         let cursor_stack_model = Model::new_empty::<u16>(AABB::zero(), surface_ctx.device());
         let cursor_stack_subsection_uniform = UniformBinding::new(surface_ctx.device(), "Cursor Stack Subsection", DynamicOffsetUniform { values: [[0.0; 4]], alignment: surface_ctx.device().limits().min_uniform_buffer_offset_alignment as usize }, None);
 
@@ -217,7 +218,7 @@ impl <'a> Game<'a> {
             ssao_kernel_samples,
             random_texture,
             camera,
-            player: Player::new(vec3(0.0, 20.0, 0.0), &mut item_atlas, &atlas_uniform, surface_ctx),
+            player: Player::new(vec3(0.0, 20.0, 0.0), &mut registries),
             screen_size,
             mouse_coords: vec2(0.0, 0.0),
             screen_info_binding,
@@ -231,7 +232,6 @@ impl <'a> Game<'a> {
             post_processing_shader,
             chunk_shader,
             chunk_manager,
-            atlas_uniform,
             cube_outline_shader,
             cube_outline_model,
             hotbar_item_ui_models,
@@ -242,7 +242,7 @@ impl <'a> Game<'a> {
             crosshair_model,
             particle_manager,
             entity_render_manager,
-            item_atlas,
+            registries,
             hotbar_atlas_subsections_uniform,
             item_ui_shader,
             text_brush,
@@ -394,7 +394,7 @@ impl <'s> WindowHandler for Game<'s> {
             render_pass.set_bind_group(0, &self.ui_texture_uniform.binding, &[]);
             self.hotbar_background_ui_models[i].render(render_pass);
             self.item_ui_shader.bind(render_pass);
-            render_pass.set_bind_group(0, &self.item_atlas.texture.binding, &[]);
+            render_pass.set_bind_group(0, &self.registries.item_atlas_registry.texture.binding, &[]);
             render_pass.set_bind_group(1, &self.hotbar_atlas_subsections_uniform.binding, &[self.hotbar_atlas_subsections_uniform.dynamic_offset_for_index(i)]);
             ui_model.render(render_pass);
         }
@@ -407,7 +407,7 @@ impl <'s> WindowHandler for Game<'s> {
         if let Some(open_inventory_model) = &self.open_inventory_model && let Some(open_inventory_item_subsections_uniform) = &self.open_inventory_item_subsections_uniform {
             open_inventory_model.container.render(render_pass);
             self.item_ui_shader.bind(render_pass);
-            render_pass.set_bind_group(0, &self.item_atlas.texture.binding, &[]);
+            render_pass.set_bind_group(0, &self.registries.item_atlas_registry.texture.binding, &[]);
             for (i, item) in open_inventory_model.items.iter().enumerate() {
                 render_pass.set_bind_group(1, &open_inventory_item_subsections_uniform.binding, &[open_inventory_item_subsections_uniform.dynamic_offset_for_index(i)]);
                 item.render(render_pass);
@@ -415,7 +415,7 @@ impl <'s> WindowHandler for Game<'s> {
         }
         if self.cursor_stack.stack.count > 0 {
             self.item_ui_shader.bind(render_pass);
-            render_pass.set_bind_group(0, &self.item_atlas.texture.binding, &[]);
+            render_pass.set_bind_group(0, &self.registries.item_atlas_registry.texture.binding, &[]);
             render_pass.set_bind_group(1, &self.cursor_stack_subsection_uniform.binding, &[0]);
             self.cursor_stack_model.render(render_pass);
         }
@@ -516,18 +516,17 @@ impl <'s> Game<'s> {
         if self.open_inventory.is_none() {
             if self.mouse_down.contains(&MouseButton::Right) {
                 if self.player.break_cooldown.is_zero() || self.new_mouse_down.contains(&MouseButton::Right) {
-                    if let Some((coordinate, face)) = self.player.raycast(self.camera.get_forward_vec(), 6.0, &self.chunk_manager) {
-                        #[allow(irrefutable_let_patterns)]
-                        if let ItemProperties::BlockItem(block_item) = &self.player.inventory.selected_item().stack.item.properties && block_item.block != AIR {
+                    if let Some((coordinate, face)) = self.player.raycast(self.camera.get_forward_vec(), 6.0, &self.chunk_manager, &self.registries) {
+                        if let ItemProperties::BlockItem(block_item) = self.registries.item_registry.get_item(self.player.inventory.selected_item().stack.item).properties && block_item.block != AIR {
                             let coordinate = (Vector3::from(coordinate)+face.direction()).into();
                             let before = self.chunk_manager.get_block(coordinate);
-                            self.chunk_manager.set_block(coordinate, block_item.block.id, true);
-                            if self.player.colliding_world(&self.chunk_manager) {
+                            self.chunk_manager.set_block(coordinate, block_item.block, true);
+                            if self.player.colliding_world(&self.chunk_manager, &self.registries) {
                                 self.chunk_manager.set_block(coordinate, before, true);
                             } else {
                                 self.player.inventory.selected_item_mut().stack.count -= 1;
                                 if self.player.inventory.selected_item_mut().stack.count <= 0 {
-                                    *self.player.inventory.selected_item_mut() = InventoryItemStack::new(ItemStack::EMPTY, &mut self.item_atlas, &self.atlas_uniform, surface_ctx);
+                                    *self.player.inventory.selected_item_mut() = InventoryItemStack::new(ItemStack::EMPTY, &self.registries);
                                 }
                             }
                             self.player.break_cooldown = Duration::from_secs_f32(0.2);
@@ -537,10 +536,10 @@ impl <'s> Game<'s> {
             }
             if self.mouse_down.contains(&MouseButton::Left) {
                 if self.player.break_cooldown.is_zero() || self.new_mouse_down.contains(&MouseButton::Left) {
-                    if let Some((coordinate, _)) = self.player.raycast(self.camera.get_forward_vec(), 6.0, &self.chunk_manager) {
+                    if let Some((coordinate, _)) = self.player.raycast(self.camera.get_forward_vec(), 6.0, &self.chunk_manager, &self.registries) {
                         let before = self.chunk_manager.get_block(coordinate);
-                        self.chunk_manager.set_block(coordinate, AIR.id, true);
-                        let before_block = get_block(before);
+                        self.chunk_manager.set_block(coordinate, AIR, true);
+                        let before_block = self.registries.block_registry.get_block(&before);
                         for _ in 0..10 {
                             self.particle_manager.add_particle(Particle {
                                 particle_type: ParticleType::BlockBreak,
@@ -550,12 +549,14 @@ impl <'s> Game<'s> {
                                 lifetime: Duration::from_secs_f32(20.0),
                             });
                         }
-                        // self.chunk_manager.get_chunk_or_create(chunk_for_block_position(coordinate)).add_entity(Entity {
-                        //     entity_type: TypedEntity::Item { stack: InventoryItemStack::new(ItemStack::new(Item::Block(before_block), 1), &mut self.item_atlas, &self.atlas_uniform, surface_ctx) },
-                        //     position: Vector3::<i32>::from(coordinate).cast().unwrap()+vec3(0.5, 0.5, 0.5),
-                        //     velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*5.0).into(),
-                        //     time_alive: Duration::ZERO,
-                        // });
+                        if let Some(item) = before_block.item  {
+                            self.chunk_manager.get_chunk_or_create(chunk_for_block_position(coordinate)).add_entity(Entity {
+                                entity_type: TypedEntity::Item { stack: InventoryItemStack::new(ItemStack::new(item, 1), &self.registries) },
+                                position: Vector3::<i32>::from(coordinate).cast().unwrap()+vec3(0.5, 0.5, 0.5),
+                                velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*5.0).into(),
+                                time_alive: Duration::ZERO,
+                            });
+                        }
                         self.player.break_cooldown = Duration::from_secs_f32(0.2);
                     }
                 }
@@ -594,7 +595,7 @@ impl <'s> Game<'s> {
                 self.open_inventory_model = None;
                 lock_mouse(surface_ctx);
             } else {
-                self.open_inventory = Some(OpenInventory::PlayerCrafting(Inventory::empty_size(10, &mut self.item_atlas, &self.atlas_uniform, surface_ctx)));
+                self.open_inventory = Some(OpenInventory::PlayerCrafting(Inventory::empty_size(10, &self.registries)));
                 self.open_inventory_model = Some(create_inventory_model(surface_ctx, self.open_inventory.as_ref().unwrap()));
                 unlock_mouse(surface_ctx);
             }
@@ -607,9 +608,7 @@ impl <'s> Game<'s> {
                     } else {
                         InventoryLocationMut { x: location.x, y: location.y, inventory: open_inventory }
                     };
-                    // if let Some(inventory_stack) = Self::stack_at_location_mut(&mut location_mut, &mut self.player.inventory) {
-                        Self::interact_inventory_slot(&mut location_mut, &mut self.player.inventory, &mut self.cursor_stack);
-                    // }
+                    Self::interact_inventory_slot(&mut location_mut, &mut self.player.inventory, &mut self.cursor_stack, &self.registries);
                 }
             }
         }
@@ -626,7 +625,7 @@ impl <'s> Game<'s> {
             self.player.velocity.y *= friction_coefficient.powf(delta.as_secs_f64()) as f32;
         }
         self.player.time_since_ground += delta;
-        self.player.move_player(self.player.velocity * delta.as_secs_f32(), &self.chunk_manager);
+        self.player.move_player(self.player.velocity * delta.as_secs_f32(), &self.chunk_manager, &self.registries);
         self.camera.eye = self.player.position;
 
         let chunk_pos = chunk_for_world_position(self.player.position.into());
@@ -662,7 +661,7 @@ impl <'s> Game<'s> {
                 let mut temp_entity = Entity { position: vec3(0.0, 0.0, 0.0), velocity: vec3(0.0, 0.0, 0.0), entity_type: TypedEntity::Marker, time_alive: Duration::ZERO };
                 while i < len {
                     std::mem::swap(&mut self.chunk_manager.get_chunk_or_create(pos).entities.get_mut(&entity_type).unwrap()[i], &mut temp_entity);
-                    temp_entity.update(&self.chunk_manager, delta);
+                    temp_entity.update(&self.chunk_manager, delta, &self.registries);
                     std::mem::swap(&mut self.chunk_manager.get_chunk_or_create(pos).entities.get_mut(&entity_type).unwrap()[i], &mut temp_entity);
                     if chunk_for_world_position(self.chunk_manager.get_chunk_or_create(pos).entities.get_mut(&entity_type).unwrap()[i].position.into()) != pos {
                         move_entities.push(self.chunk_manager.get_chunk_or_create(pos).entities.get_mut(&entity_type).unwrap().remove(i));
@@ -691,14 +690,14 @@ impl <'s> Game<'s> {
         }
         for (pos, synchronous) in needed_chunk_updates {
             if synchronous {
-                self.chunk_manager.generate_model_now(pos.into(), self.player.position.into(), surface_ctx);
+                self.chunk_manager.generate_model_now(pos.into(), self.player.position.into(), &self.registries, surface_ctx);
             } else {
                 self.chunk_manager.generate_model(pos.into(), self.player.position.into());
             }
         }
 
         let mut count = 0;
-        for chunk_pos in util::positions(100) {
+        for chunk_pos in util::positions(50) {
             let relative_pos = [chunk_pos[0] + (self.camera.eye.x / CHUNK_SIZE as f32).floor() as i32, chunk_pos[1] + (self.camera.eye.y / CHUNK_SIZE as f32).floor() as i32, chunk_pos[2] + (self.camera.eye.z / CHUNK_SIZE as f32).floor() as i32];
             if !self.chunk_manager.chunk_loaded(relative_pos) {
                 self.chunk_manager.get_chunk_or_create(relative_pos);
@@ -717,13 +716,13 @@ impl <'s> Game<'s> {
         let time = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()-self.start_time) as f32 / 1000.0;
         self.screen_info_binding.set_data(surface_ctx.queue(), ScreenInfo::new(self.screen_size, time, self.camera.to_raw()));
 
-        if let Some((target_position, _)) = self.player.raycast(self.camera.get_forward_vec(), 6.0, &self.chunk_manager) {
+        if let Some((target_position, _)) = self.player.raycast(self.camera.get_forward_vec(), 6.0, &self.chunk_manager, &self.registries) {
             self.cube_outline_model = Some(cube_outline_model(surface_ctx.device(), self.camera.build_view_projection_matrix(), Vector3::<i32>::from(target_position).cast().unwrap()));
         } else {
             self.cube_outline_model = None;
         }
         let hotbar_atlas_subsections = self.player.inventory.items[0..9].iter().map(|item| {
-            self.item_atlas.subsection_for_position(item.atlas_coordinates)
+            self.registries.item_atlas_registry.subsection_for_position(item.atlas_coordinates)
         }).collect::<Vec<[f32; 4]>>().try_into().unwrap();
         self.hotbar_atlas_subsections_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: hotbar_atlas_subsections, alignment: self.hotbar_atlas_subsections_uniform.value.alignment });
         if let Some(open_inventory) = &mut self.open_inventory {
@@ -733,7 +732,7 @@ impl <'s> Game<'s> {
                 for physical_x in 0..num_physical_cols {
                     if let Some(location) = inventory_location(open_inventory, physical_x, physical_y) {
                         if let Some(stack) = Self::stack_at_location(&location, &self.player.inventory) {
-                            values.push(self.item_atlas.subsection_for_position(stack.atlas_coordinates));
+                            values.push(self.registries.item_atlas_registry.subsection_for_position(stack.atlas_coordinates));
                         } else {
                             println!("got location {location:?} but no stack is associated");
                         }
@@ -779,7 +778,7 @@ impl <'s> Game<'s> {
             UIVertex { position: [cursor_screen_position.x+cursor_stack_width, cursor_screen_position.y-cursor_stack_height, 0.0], tex_coords: [1.0, 1.0], repeat_count: [1.0, 1.0] },
             UIVertex { position: [cursor_screen_position.x+cursor_stack_width, cursor_screen_position.y, 0.0], tex_coords: [1.0, 0.0], repeat_count: [1.0, 1.0] },
         ], &[0_u16, 2, 1, 2, 3, 1], AABB::zero(), surface_ctx.device());
-        self.cursor_stack_subsection_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: [self.item_atlas.subsection_for_position(self.cursor_stack.atlas_coordinates)], alignment: self.cursor_stack_subsection_uniform.value.alignment });
+        self.cursor_stack_subsection_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: [self.registries.item_atlas_registry.subsection_for_position(self.cursor_stack.atlas_coordinates)], alignment: self.cursor_stack_subsection_uniform.value.alignment });
     }
 
     fn update_clean_up(&mut self, surface_ctx: &dyn SurfaceCtx, _delta: Duration) {
@@ -876,11 +875,11 @@ impl <'s> Game<'s> {
     fn render_deferred<'a: 'b, 'b>(&'a mut self, surface_ctx: &'b dyn SurfaceCtx, render_pass: &mut RenderPass<'b>) {
         self.chunk_shader.bind(render_pass);
         render_pass.set_bind_group(0, &self.screen_info_binding.binding, &[]);
-        render_pass.set_bind_group(1, &self.atlas_uniform.binding, &[]);
+        render_pass.set_bind_group(1, &self.registries.block_atlas_texture.binding, &[]);
         for chunk in self.chunk_manager.chunks_sorted(self.camera.eye.into()) {
             if chunk.visible() {
                 //TODO: move camera stuff out of particle manager
-                chunk.render(render_pass, &self.entity_render_manager, &self.item_atlas, &self.chunk_shader, &self.atlas_uniform, surface_ctx);
+                chunk.render(render_pass, &self.entity_render_manager, &self.registries, &self.chunk_shader, surface_ctx);
             }
         }
 
@@ -966,7 +965,7 @@ impl <'s> Game<'s> {
         }
     }
 
-    fn interact_inventory_slot<'a>(location: &'a mut InventoryLocationMut<'a>, player_inventory: &'a mut Inventory, cursor_stack: &mut InventoryItemStack) {
+    fn interact_inventory_slot<'a>(location: &'a mut InventoryLocationMut<'a>, player_inventory: &'a mut Inventory, cursor_stack: &mut InventoryItemStack, registries: &Registries) {
         match location.inventory {
             OpenInventory::PlayerInventory => {
                 if let Some(i) = Self::stack_index_at_location(&location.as_ref()) {
@@ -975,14 +974,15 @@ impl <'s> Game<'s> {
             },
             OpenInventory::PlayerCrafting(crafting_inventory) => {
                 if location.x == 4 && location.y == 1 {
-                    crafting_inventory.take_crafting_result(cursor_stack);
+                    crafting_inventory.take_crafting_result(cursor_stack, registries);
+                    crafting_inventory.calculate_crafting_result(registries);
                 }
                 if (0..3).contains(&location.x) && (0..3).contains(&location.y) {
                     if let Some(i) = Self::stack_index_at_location(&location.as_ref()) {
                         let stack = Self::stack_at_index_mut(i, location.inventory, player_inventory);
                         std::mem::swap(stack, cursor_stack);
                         if let Some(inventory) = location.inner_inventory() {
-                            inventory.calculate_crafting_result();
+                            inventory.calculate_crafting_result(registries);
                         }
                     }
                 }

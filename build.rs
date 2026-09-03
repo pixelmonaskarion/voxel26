@@ -8,9 +8,8 @@ fn main() {
     
     resource_generator.add_path(Path::new("src/res"));
 
-    let mut blocks = dir_contents("src/tbg-res/blocks");
-    blocks.sort_by_cached_key(|it| it.file_name().unwrap().to_string_lossy().to_string());
-    resource_generator.compile_atlas("block_atlas.png", &blocks, ColorType::Rgba8, ImageFormat::Png, 512);
+    resource_generator.compile_atlas("block_atlas.png", &dir_contents("src/tbg-res/blocks"), ColorType::Rgba8, ImageFormat::Png, 512);
+    resource_generator.compile_merged_json(&dir_contents("src/tbg-res/crafting_recipes"), "crafting_recipes.json");
 
     resource_generator.generate();
 }

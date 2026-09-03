@@ -17,6 +17,8 @@ mod particles;
 mod entity;
 mod ssao;
 mod items;
+mod registries;
+mod crafting;
 
 include!(concat!(env!("OUT_DIR"), "/resources.rs"));
 

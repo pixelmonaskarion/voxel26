@@ -1,6 +1,6 @@
 use cgmath::Vector3;
 
-use crate::{blocks::solid_block, chunk::{CHUNK_SIZE, ChunkManager}};
+use crate::{chunk::{CHUNK_SIZE, ChunkManager}, registries::Registries};
 
 pub struct RingIter {
     max: i32,
@@ -95,7 +95,7 @@ pub fn chunk_for_world_position(world_position: [f32; 3]) -> [i32; 3] {
     return [cx, cy, cz];
 }
 
-pub fn colliding_world(world: &ChunkManager, center: Vector3<f32>, positive_size: Vector3<f32>, negative_size: Vector3<f32>) -> bool {
+pub fn colliding_world(world: &ChunkManager, center: Vector3<f32>, positive_size: Vector3<f32>, negative_size: Vector3<f32>, registries: &Registries) -> bool {
     let min_world = center + negative_size;
     let max_world = center + positive_size;
 
@@ -111,7 +111,7 @@ pub fn colliding_world(world: &ChunkManager, center: Vector3<f32>, positive_size
             for bz in min_block_z..=max_block_z {
                 let block_position = [bx, by, bz];
                 let block = world.get_block(block_position);
-                if solid_block(block) {
+                if registries.block_registry.get_block(&block).solid {
                     return true;
                 }
             }

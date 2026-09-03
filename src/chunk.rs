@@ -1,13 +1,13 @@
-use std::{collections::HashMap, hash::{DefaultHasher, Hash, Hasher}, ops::{AddAssign, Mul}, sync::mpsc, time::{Duration, SystemTime}};
+use std::{collections::HashMap, hash::{DefaultHasher, Hash, Hasher}, ops::{AddAssign, Mul}, sync::{Arc, mpsc}, time::{Duration, SystemTime}};
 
-use bespoke_engine::{binding::UniformBinding, model::Render, shader::Shader, surface_context::SurfaceCtx, texture::Texture};
+use bespoke_engine::{model::Render, shader::Shader, surface_context::SurfaceCtx};
 use cgmath::{InnerSpace, MetricSpace, Vector3, vec2, vec3};
 use noise::{NoiseFn, Perlin};
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, RenderPass};
 use itertools::Itertools;
 
-use crate::{BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, block_models::{BlockModel, parse_model}, blocks::{self, AIR, Block, BlockID, DIRT, GOLD, GRASS, NOT_RENDERED_LAYER, STONE, WATER}, entity::{Entity, EntityRenderManager, EntityType}, features::{Feature, bush::BushFeature, tree::TreeFeature}, game::Vertex, inventory::ItemAtlas, util::neighbors};
+use crate::{BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, block_models::{BlockModel, parse_model}, blocks::{AIR, Block, BlockID, DIRT, GOLD, GRASS, NOT_RENDERED_LAYER, STONE, WATER}, entity::{Entity, EntityRenderManager, EntityType}, features::{Feature, bush::BushFeature, tree::TreeFeature}, game::Vertex, registries::Registries, util::neighbors};
 
 pub struct Chunk {
     blocks: Vec<BlockID>,
@@ -77,9 +77,9 @@ impl Chunk {
         }
     }
 
-    pub fn render<'s: 'b, 'b>(&'s self, render_pass: &mut RenderPass<'b>, entity_render_manager: &'b EntityRenderManager, item_atlas: &ItemAtlas, chunk_shader: &'b Shader<'b>, atlas_binding: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) {
+    pub fn render<'s: 'b, 'b>(&'s self, render_pass: &mut RenderPass<'b>, entity_render_manager: &'b EntityRenderManager, registries: &Registries, chunk_shader: &'b Shader<'b>, surface_ctx: &dyn SurfaceCtx) {
         chunk_shader.bind(render_pass);
-        render_pass.set_bind_group(1, &atlas_binding.binding, &[]);
+        render_pass.set_bind_group(1, &registries.block_atlas_texture.binding, &[]);
         if let Some(model) = &self.model {
             if model.num_vertices > 0 {
                 render_pass.set_vertex_buffer(0, model.buffer.slice(..(model.num_vertices*size_of::<Vertex>()) as u64));
@@ -98,14 +98,14 @@ impl Chunk {
                 match *entity_type {
                     EntityType::Item => {
                         entity_render_manager.item_shader.bind(render_pass);
-                        render_pass.set_bind_group(1, &item_atlas.texture.binding, &[]);
+                        render_pass.set_bind_group(1, &registries.item_atlas_registry.texture.binding, &[]);
                     }
                     _ => {}
                 }
                 let max_batch_size = entity_render_manager.instance_buffer.size() as usize;
                 let mut instance_size = 0;
                 let instances = entities.iter().flat_map(|it| {
-                    let instance = it.shader_instance(item_atlas);
+                    let instance = it.shader_instance(&registries.item_atlas_registry);
                     if let Some(instance) = &instance {
                         instance_size = instance.len();
                     }
@@ -119,7 +119,7 @@ impl Chunk {
                 }
             }
             chunk_shader.bind(render_pass);
-            render_pass.set_bind_group(1, &atlas_binding.binding, &[]);
+            render_pass.set_bind_group(1, &registries.block_atlas_texture.binding, &[]);
             if model.num_transparent_vertices > 0 {
                 render_pass.set_vertex_buffer(0, model.buffer.slice((model.num_vertices*size_of::<Vertex>()) as u64..(model.num_vertices*size_of::<Vertex>()+model.num_transparent_vertices*size_of::<Vertex>()) as u64));
                 render_pass.set_index_buffer(model.buffer.slice(((model.num_vertices+model.num_transparent_vertices)*size_of::<Vertex>()) as u64..((model.num_vertices+model.num_transparent_vertices)*size_of::<Vertex>()+model.num_transparent_indices*size_of::<u32>()) as u64), wgpu::IndexFormat::Uint32);
@@ -177,7 +177,7 @@ pub struct ChunkManager {
 }
 #[allow(unused)]
 impl ChunkManager {
-    pub fn new(surface_ctx: &dyn SurfaceCtx) -> Self {
+    pub fn new(registries: Arc<Registries>, surface_ctx: &dyn SurfaceCtx) -> Self {
         let (gen_blocks_req_tx, gen_blocks_req_rx) = mpsc::channel::<GenerateChunkBlocksRequest>();
         let (gen_blocks_res_tx, gen_blocks_res_rx) = mpsc::channel();
         let (gen_model_req_tx, gen_model_req_rx) = mpsc::channel::<GenerateChunkMeshRequest>();
@@ -231,7 +231,7 @@ impl ChunkManager {
                 }
                 while let Some(req) = queue.pop() {
                     let start = SystemTime::now();
-                    gen_model_res_tx.send(Self::generate_mesh_req(req, &device)).unwrap();
+                    gen_model_res_tx.send(Self::generate_mesh_req(req, &device, &registries)).unwrap();
                     t += SystemTime::now().duration_since(start).unwrap();
                     n += 1;
                     if n % 1000 == 999 {
@@ -304,14 +304,14 @@ impl ChunkManager {
         }
     }
 
-    pub fn generate_model_and_surroundings_now(&mut self, chunk_position: [i32; 3], player_position: [f32; 3], surface_ctx: &dyn SurfaceCtx) {
-        self.generate_model_now(chunk_position, player_position, surface_ctx);
+    pub fn generate_model_and_surroundings_now(&mut self, chunk_position: [i32; 3], player_position: [f32; 3], registries: &Registries, surface_ctx: &dyn SurfaceCtx) {
+        self.generate_model_now(chunk_position, player_position, registries, surface_ctx);
         for position in neighbors(chunk_position) {
-            self.generate_model_now(position, player_position, surface_ctx);
+            self.generate_model_now(position, player_position, registries, surface_ctx);
         }
     }
 
-    pub fn generate_model_now(&mut self, chunk_position: [i32; 3], player_position: [f32; 3], surface_ctx: &dyn SurfaceCtx) {
+    pub fn generate_model_now(&mut self, chunk_position: [i32; 3], player_position: [f32; 3], registries: &Registries, surface_ctx: &dyn SurfaceCtx) {
         let time = SystemTime::now();
         if let Some(chunk_blocks) = self.chunks.get(chunk_position).map(|it| it.blocks.clone()) {
             let req = GenerateChunkMeshRequest {
@@ -325,7 +325,7 @@ impl ChunkManager {
                 cpz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]+1]).map(|it| it.blocks.clone()),
                 cnz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]-1]).map(|it| it.blocks.clone()),
             };
-            let res = Self::generate_mesh_req(req, surface_ctx.device());
+            let res = Self::generate_mesh_req(req, surface_ctx.device(), registries);
             self.chunks.get_mut(chunk_position).unwrap().model = res.chunk_model;
         }
         println!("took {:?} to generate model synchronously", SystemTime::now().duration_since(time).unwrap());
@@ -403,20 +403,20 @@ impl ChunkManager {
                     if yf64 <= height {
                         if yf64+5.0 < height || height_gradient.magnitude() > 0.5 {
                             if rand::random_range(0..10000) == 0 {
-                                blocks[index_in_chunk(x, y, z)] = GOLD.id;    
+                                blocks[index_in_chunk(x, y, z)] = GOLD;    
                             } else {
-                                blocks[index_in_chunk(x, y, z)] = STONE.id;
+                                blocks[index_in_chunk(x, y, z)] = STONE;
                             }
                         } else if yf64+1.0 < height {
-                            blocks[index_in_chunk(x, y, z)] = DIRT.id;
+                            blocks[index_in_chunk(x, y, z)] = DIRT;
                         }else {
-                            blocks[index_in_chunk(x, y, z)] = GRASS.id;
+                            blocks[index_in_chunk(x, y, z)] = GRASS;
                         }
                     } else {
                         if yf64 <= 0.0 {
-                            blocks[index_in_chunk(x, y, z)] = WATER.id;
+                            blocks[index_in_chunk(x, y, z)] = WATER;
                         } else {
-                            blocks[index_in_chunk(x, y, z)] = AIR.id;
+                            blocks[index_in_chunk(x, y, z)] = AIR;
                         }
                     }
                 }
@@ -494,14 +494,14 @@ impl ChunkManager {
         }
     }
 
-    fn generate_mesh_req(req: GenerateChunkMeshRequest, device: &Device) -> GenerateChunkModelResponse {
+    fn generate_mesh_req(req: GenerateChunkMeshRequest, device: &Device, registries: &Registries) -> GenerateChunkModelResponse {
         if req.chunk_blocks == [0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize] {
             return GenerateChunkModelResponse {
                 chunk_model: None,
                 chunk_position: req.chunk_position,
             };
         }
-        let lod = 2i32.pow((Vector3::<i32>::from(req.chunk_position).cast::<f32>().unwrap().mul(CHUNK_SIZE as f32).distance2(Vector3::<f32>::from(req.player_position))/500.0f32.powi(2).floor()) as u32).min(4).max(1);
+        let lod = 2i32.pow((Vector3::<i32>::from(req.chunk_position).cast::<f32>().unwrap().mul(CHUNK_SIZE as f32).distance2(Vector3::<f32>::from(req.player_position))/250.0f32.powi(2).floor()) as u32).min(4).max(1);
         fn get_block(x: i32, y: i32, z: i32, req: &GenerateChunkMeshRequest, lod: i32) -> BlockID {
             let chunk_sizef32 = CHUNK_SIZE as f32;
             let chunk_sizei32 = CHUNK_SIZE as i32;
@@ -540,7 +540,7 @@ impl ChunkManager {
                         return blocks[index_in_chunk(lx as u32, ly as u32, lz as u32)];
                     }
                 } else {
-                    return AIR.id;
+                    return AIR;
                 }
             }
         }
@@ -552,14 +552,15 @@ impl ChunkManager {
         let mut modeled_vertices = Vec::with_capacity(256);
         let mut modeled_indices = Vec::with_capacity(256);
         let mut model_cache = HashMap::new();
-        let mut mask = [AIR; (CHUNK_SIZE*CHUNK_SIZE) as usize];
+        let air_block = registries.block_registry.get_block(&AIR);
+        let mut mask = [air_block; (CHUNK_SIZE*CHUNK_SIZE) as usize];
         let mut block_cache: Vec<Option<Block>> = vec![];
         #[inline(always)]
-        fn get_block_cached(block_id: BlockID, block_cache: &mut Vec<Option<Block>>) -> Block {
+        fn get_block_cached(block_id: BlockID, block_cache: &mut Vec<Option<Block>>, registries: &Registries) -> Block {
             if block_cache.len() > block_id as usize && let Some(block) = block_cache[block_id as usize] {
                 return block;
             } else {
-                let block = blocks::get_block(block_id);
+                let block = registries.block_registry.get_block(&block_id);
                 if block_cache.len() <= block_id as usize {
                     block_cache.extend_from_slice(&vec![None; block_id as usize + 1 - block_cache.len()]);
                 }
@@ -600,19 +601,19 @@ impl ChunkManager {
                             pos[dim] = slice;
                             pos[u] = x;
                             pos[v] = y;
-                            let block_here = get_block_cached(get_block(pos[0], pos[1], pos[2], &req, lod), &mut block_cache);
+                            let block_here = get_block_cached(get_block(pos[0], pos[1], pos[2], &req, lod), &mut block_cache, registries);
                             if block_here.has_model && lod == 1 {
                                 add_modeled_block(block_here, pos, chunk_position, &mut modeled_vertices, &mut modeled_indices, &mut model_cache);
                                 mask_i += 1;
                                 continue;
                             }
 
-                            let block_there = get_block_cached(get_block(pos[0]+slice_direction[0], pos[1]+slice_direction[1], pos[2]+slice_direction[2], &req, lod), &mut block_cache);
+                            let block_there = get_block_cached(get_block(pos[0]+slice_direction[0], pos[1]+slice_direction[1], pos[2]+slice_direction[2], &req, lod), &mut block_cache, registries);
 
                             mask[mask_i] = if ((block_here.id != block_there.id) && (block_here.layer < block_there.layer || block_there.has_model)) || !block_here.cull || !block_there.cull {
                                 block_here
                             } else {
-                                AIR
+                                air_block
                             };
                             mask_i += 1;
                         }
@@ -838,7 +839,7 @@ impl ChunkManager {
                                 add_quad(x, y, w, h, block, &mut vertices, &mut transparency_vertices, direction, dim, slice, chunk_position);
                                 for zero_x in x..x+w {
                                     for zero_y in y..y+h {
-                                        mask[mask_index(zero_x, zero_y)] = AIR;
+                                        mask[mask_index(zero_x, zero_y)] = air_block;
                                     }
                                 }
                             }
@@ -988,7 +989,7 @@ impl ChunkManager {
         if let Some(chunk) = self.chunks.get([cx, cy, cz]) {
             return chunk.blocks[index_in_chunk(bx, by, bz)];
         } else {
-            return AIR.id;
+            return AIR;
         }
     }
 

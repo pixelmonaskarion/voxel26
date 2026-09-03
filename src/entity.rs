@@ -5,7 +5,7 @@ use bytemuck::bytes_of;
 use cgmath::{Vector3, vec3};
 use wgpu::{Buffer, BufferUsages, TextureFormat, wgt::BufferDescriptor};
 
-use crate::{RES_SHADERS_ITEM_ENTITY_WGSL, chunk::ChunkManager, game::ScreenInfo, inventory::{InventoryItemStack, ItemAtlas}, util};
+use crate::{RES_SHADERS_ITEM_ENTITY_WGSL, chunk::ChunkManager, game::ScreenInfo, inventory::InventoryItemStack, registries::{ItemAtlasRegistry, Registries}, util};
 
 pub struct Entity {
     pub position: Vector3<f32>,
@@ -28,7 +28,7 @@ impl Entity {
         }
     }
 
-    pub fn update(&mut self, world: &ChunkManager, delta_time: Duration) {
+    pub fn update(&mut self, world: &ChunkManager, delta_time: Duration, registries: &Registries) {
         self.time_alive += delta_time;
         self.velocity.x *= 0.9;
         self.velocity.z *= 0.9;
@@ -36,7 +36,7 @@ impl Entity {
         let delta = self.velocity * delta_time.as_secs_f32();
         let x_steps = (delta.x.abs()/0.5).ceil();
         let colliding = |position: Vector3<f32>| -> bool {
-            util::colliding_world(world, position, vec3(0.15, 0.15, 0.15), vec3(-0.15, -0.15, -0.15))
+            util::colliding_world(world, position, vec3(0.15, 0.15, 0.15), vec3(-0.15, -0.15, -0.15), registries)
         };
         for _ in 0..x_steps as i32 {
             self.position.x += delta.x/x_steps;
@@ -64,7 +64,7 @@ impl Entity {
 
     }
 
-    pub fn shader_instance(&self, item_atlas: &ItemAtlas) -> Option<Vec<u8>> {
+    pub fn shader_instance(&self, item_atlas: &ItemAtlasRegistry) -> Option<Vec<u8>> {
         match &self.entity_type {
             TypedEntity::Item { stack } => {
                 let atlas_subsection = item_atlas.subsection_for_position(stack.atlas_coordinates);

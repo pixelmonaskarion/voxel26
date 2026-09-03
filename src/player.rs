@@ -1,9 +1,8 @@
 use std::time::Duration;
 
-use bespoke_engine::{binding::UniformBinding, surface_context::SurfaceCtx, texture::Texture};
 use cgmath::{InnerSpace, Vector3, vec3};
 
-use crate::{blocks::solid_block, chunk::ChunkManager, inventory::{Inventory, ItemAtlas}};
+use crate::{chunk::ChunkManager, inventory::Inventory, registries::Registries};
 
 pub struct Player {
     pub position: Vector3<f32>,
@@ -17,24 +16,24 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(position: Vector3<f32>, item_atlas: &mut ItemAtlas, block_atlas: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) -> Self {
+    pub fn new(position: Vector3<f32>, registries: &Registries) -> Self {
         let mut _self = Self {
             position,
             velocity: vec3(0.0, 0.0, 0.0),
             time_since_ground: Duration::new(2, 0),
             movement_mode: 0,
             break_cooldown: Duration::ZERO,
-            inventory: Inventory::empty_size(4*9, item_atlas, block_atlas, surface_ctx),
+            inventory: Inventory::empty_size(4*9, registries),
             health: 20.0,
         };
         _self
     }
 
-    pub fn move_player(&mut self, delta: Vector3<f32>, world: &ChunkManager) {
+    pub fn move_player(&mut self, delta: Vector3<f32>, world: &ChunkManager, registries: &Registries) {
         let x_steps = (delta.x.abs()/0.5).ceil();
         for _ in 0..x_steps as i32 {
             self.position.x += delta.x/x_steps;
-            if self.colliding_world(world) {
+            if self.colliding_world(world, registries) {
                 self.position.x -= delta.x/x_steps;
                 self.velocity.x = 0.0;
             }
@@ -42,7 +41,7 @@ impl Player {
         let z_steps = (delta.z.abs()/0.5).ceil();
         for _ in 0..z_steps as i32 {
             self.position.z += delta.z/z_steps;
-            if self.colliding_world(world) {
+            if self.colliding_world(world, registries) {
                 self.position.z -= delta.z/z_steps;
                 self.velocity.z = 0.0;
             }
@@ -50,7 +49,7 @@ impl Player {
         let y_steps = (delta.y.abs()/0.5).ceil();
         for _ in 0..y_steps as i32 {
             self.position.y += delta.y/y_steps;
-            if self.colliding_world(world) {
+            if self.colliding_world(world, registries) {
                 self.position.y -= delta.y/y_steps;
                 self.velocity.y = 0.0;
                 if delta.y < 0.0 {
@@ -64,7 +63,7 @@ impl Player {
         self.health -= damage;
     }
 
-    pub fn colliding_world(&self, world: &ChunkManager) -> bool {
+    pub fn colliding_world(&self, world: &ChunkManager, registries: &Registries) -> bool {
         if self.movement_mode == 1 {
             return false;
         }
@@ -94,14 +93,14 @@ impl Player {
             let position = self.position+offset;
             let block_position = position.map(|it| it.floor() as i32).into();
             let block = world.get_block(block_position);
-            if solid_block(block) {
+            if registries.block_registry.get_block(&block).solid {
                 return true;
             }
         }
         return false;
     }
 
-    pub fn raycast(&self, direction: Vector3<f32>, max_distance: f32, world: &ChunkManager) -> Option<([i32;3], BlockFace)> {
+    pub fn raycast(&self, direction: Vector3<f32>, max_distance: f32, world: &ChunkManager, registries: &Registries) -> Option<([i32;3], BlockFace)> {
         if direction.magnitude2() == 0.0 {
             return None;
         }
@@ -168,7 +167,7 @@ impl Player {
             }
 
             let block_id = world.get_block(voxel);
-            if solid_block(block_id) {
+            if registries.block_registry.get_block(&block_id).solid {
                 return Some((voxel, hit_face.unwrap()));
             }
         }

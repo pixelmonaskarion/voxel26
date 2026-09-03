@@ -6,7 +6,10 @@
     ],
     "result": "P",
     "substitutions": {
-        "W": "wood",
-        "P": "planks"
+        "W": "wood_block",
+        "P": {
+            "id": "planks_block",
+            "count": 4
+        }
     }
 }
