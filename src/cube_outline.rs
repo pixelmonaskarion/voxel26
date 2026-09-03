@@ -1,94 +1,97 @@
-use bespoke_engine::{binding::{Descriptor, UniformBinding}, culling::AABB, model::Model, resource_loader::load_resource_string, shader::{Shader, ShaderConfig, ShaderType, parse_shader}, window::MULTISAMPLE_COUNT};
+use bespoke_engine::{binding::{Descriptor, UniformBinding}, culling::AABB, model::Model, shader::{Shader, ShaderInit, ShaderType}};
 use cgmath::{InnerSpace, Matrix, Matrix3, Matrix4, SquareMatrix, Vector3, Vector4};
-use wgpu::{Device, FrontFace, PipelineCompilationOptions, TextureFormat};
+use wgpu::{Device, TextureFormat};
 
-use crate::{game::{ScreenInfo, Vertex}, instance::Instance};
+use crate::{RES_SHADERS_CUBE_OUTLINE_WGSL, game::{ScreenInfo, Vertex}, instance::Instance};
 
 pub fn cube_outline_shader<'a>(device: &Device, formats: Vec<TextureFormat>, screen_info_binding: &UniformBinding<ScreenInfo>) -> Shader<'a> {
-    let resource_path = "res/shaders/cube_outline.wgsl";
-    let shader_types: Vec<&ShaderType> = vec![&screen_info_binding.shader_type];
-    let bindings = vec![&screen_info_binding.layout];
-    let vertex_buffers = vec![Some(Vertex::desc()), Some(Instance::desc())];
-    let config = ShaderConfig {
-        face_cull: None,
-        // depth_compare: wgpu::CompareFunction::Always,
-        ..Default::default()
-    };
-
-    let source = &load_resource_string(resource_path);
-    let shader_types_owned = shader_types.clone().into_iter().map(|it| it.clone()).collect();
-    let parsed_source = parse_shader(source, &shader_types_owned);
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(parsed_source.clone().into()),
-    });
-    let targets = &formats.iter().map(|format| {
-        Some(wgpu::ColorTargetState {
-            format: *format,
-            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-            write_mask: wgpu::ColorWrites::ALL,
-        })
-    }).collect::<Vec<Option<wgpu::ColorTargetState>>>();
-    let fragment = if !config.depth_only {
-        Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets,
-            compilation_options: PipelineCompilationOptions::default(),
-        })
-    } else {
-        None
-    };
-    let layout =
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Render Pipeline Layout"),
-            immediate_size: 0,
-            bind_group_layouts: &bindings.into_iter().map(|it| Some(it)).collect::<Vec<_>>(),
-        });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Render Pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &vertex_buffers,
-            compilation_options: PipelineCompilationOptions::default(),
-        },
-        depth_stencil: config.depth_stencil(),
-        fragment,
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: config.face_cull.unwrap_or(FrontFace::Ccw),
-            cull_mode: config.face_cull.map(|_| wgpu::Face::Back),
-            // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
-            // or Features::POLYGON_MODE_POINT
-            polygon_mode: config.line_mode,
-            // Requires Features::DEPTH_CLIP_CONTROL
-            unclipped_depth: false,
-            // Requires Features::CONSERVATIVE_RASTERIZATION
-            conservative: false,
-        },
-        multisample: wgpu::MultisampleState {
-            count: MULTISAMPLE_COUNT.lock().unwrap().clone(),
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        // If the pipeline will be used with a multiview render pass, this
-        // indicates how many array layers the attachments will have.
-        multiview_mask: None,
-        cache: None,
-    });
-    Shader {
-        shader,
-        layout,
-        pipeline,
-        resource_path: resource_path.into(),
-        config,
+    let resource = RES_SHADERS_CUBE_OUTLINE_WGSL;
+    let shader_types: Vec<ShaderType> = vec![screen_info_binding.shader_type.clone()];
+    let binding_layouts = vec![screen_info_binding.layout.clone()];
+    let vertex_buffers = vec![Vertex::desc(), Instance::desc()];
+    let config = ShaderInit {
+        binding_layouts,
         vertex_buffers,
-        shader_types: shader_types_owned,
+        shader_types,
         formats,
-    }
+        resource,
+
+        face_cull: None,
+        ..Default::default()
+        // depth_compare: wgpu::CompareFunction::Always,
+    };
+    return Shader::new(config, device);
+
+    // let source = &resource.load_string();
+    // let shader_types_owned = shader_types.clone().into_iter().map(|it| it.clone()).collect();
+    // let parsed_source = parse_shader(source, &shader_types_owned);
+    // let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    //     label: Some("Shader"),
+    //     source: wgpu::ShaderSource::Wgsl(parsed_source.clone().into()),
+    // });
+    // let targets = &formats.iter().map(|format| {
+    //     Some(wgpu::ColorTargetState {
+    //         format: *format,
+    //         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+    //         write_mask: wgpu::ColorWrites::ALL,
+    //     })
+    // }).collect::<Vec<Option<wgpu::ColorTargetState>>>();
+    // let fragment = if !config.depth_only {
+    //     Some(wgpu::FragmentState {
+    //         module: &shader,
+    //         entry_point: Some("fs_main"),
+    //         targets,
+    //         compilation_options: PipelineCompilationOptions::default(),
+    //     })
+    // } else {
+    //     None
+    // };
+    // let layout =
+    //     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    //         label: Some("Render Pipeline Layout"),
+    //         immediate_size: 0,
+    //         bind_group_layouts: &bindings.into_iter().map(|it| Some(it)).collect::<Vec<_>>(),
+    //     });
+    // let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    //     label: Some("Render Pipeline"),
+    //     layout: Some(&layout),
+    //     vertex: wgpu::VertexState {
+    //         module: &shader,
+    //         entry_point: Some("vs_main"),
+    //         buffers: &vertex_buffers,
+    //         compilation_options: PipelineCompilationOptions::default(),
+    //     },
+    //     depth_stencil: config.depth_stencil(),
+    //     fragment,
+    //     primitive: wgpu::PrimitiveState {
+    //         topology: wgpu::PrimitiveTopology::TriangleList,
+    //         strip_index_format: None,
+    //         front_face: config.face_cull.unwrap_or(FrontFace::Ccw),
+    //         cull_mode: config.face_cull.map(|_| wgpu::Face::Back),
+    //         // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
+    //         // or Features::POLYGON_MODE_POINT
+    //         polygon_mode: config.line_mode,
+    //         // Requires Features::DEPTH_CLIP_CONTROL
+    //         unclipped_depth: false,
+    //         // Requires Features::CONSERVATIVE_RASTERIZATION
+    //         conservative: false,
+    //     },
+    //     multisample: wgpu::MultisampleState {
+    //         count: MULTISAMPLE_COUNT.lock().unwrap().clone(),
+    //         mask: !0,
+    //         alpha_to_coverage_enabled: false,
+    //     },
+    //     // If the pipeline will be used with a multiview render pass, this
+    //     // indicates how many array layers the attachments will have.
+    //     multiview_mask: None,
+    //     cache: None,
+    // });
+    // Shader {
+    //     shader,
+    //     layout,
+    //     pipeline,
+    //     config,
+    // }
 }
 
 pub fn cube_outline_model(device: &Device, view_proj: Matrix4<f32>, position: Vector3<f32>) -> Model {

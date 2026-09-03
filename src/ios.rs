@@ -17,6 +17,7 @@ mod ui;
 mod particles;
 mod entity;
 mod ssao;
+mod items;
 include!(concat!(env!("OUT_DIR"), "/resources.rs"));
 
 #[unsafe(no_mangle)]

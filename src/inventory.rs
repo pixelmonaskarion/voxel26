@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use bespoke_engine::{binding::{Descriptor, UniformBinding}, camera::OrthographicCamera, model::Render, shader::{Shader, ShaderConfig}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture}};
+use bespoke_engine::{binding::{Descriptor, UniformBinding}, camera::OrthographicCamera, model::Render, resource_loader::ResourceConst, shader::{Shader, UniformShaderInit}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture}};
 use cgmath::{Matrix4, Vector2, vec2, vec3};
 use wgpu::RenderPassDepthStencilAttachment;
 
-use crate::{block_models::block_model, blocks::{AIR, Block, NOT_RENDERED_LAYER}, game::{ScreenInfo, Vertex}};
+use crate::{RES_SHADERS_BLOCK_RENDERER_WGSL, block_models::block_model, blocks::{self, Block, NOT_RENDERED_LAYER}, game::{ScreenInfo, Vertex}, items::{self, BlockItem, Item, ItemId, ItemProperties}};
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct Inventory {
@@ -15,7 +15,7 @@ pub struct Inventory {
 impl Inventory {
     pub fn empty_size(size: usize, item_atlas: &mut ItemAtlas, block_atlas: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) -> Self {
         Self {
-            items: vec![InventoryItemStack::new(ItemStack::new(Item::Block(AIR), 0), item_atlas, block_atlas, surface_ctx); size],
+            items: vec![InventoryItemStack::new(ItemStack::EMPTY, item_atlas, block_atlas, surface_ctx); size],
             selected: 0,
         }
     }
@@ -34,7 +34,7 @@ impl Inventory {
                 inventory_stack.stack.count += item_stack.stack.count;
                 return true;
             }
-            if inventory_stack.stack.item == Item::Block(AIR) {
+            if inventory_stack.stack.is_empty() {
                 *inventory_stack = item_stack.clone();
                 return true;
             }
@@ -74,7 +74,7 @@ pub struct ItemStack {
 
 impl ItemStack {
     pub const EMPTY: Self = ItemStack {
-        item: Item::Block(AIR),
+        item: items::NOTHING,
         count: 0,
     };
 
@@ -84,17 +84,16 @@ impl ItemStack {
             item,
         }
     }
-}
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Item {
-    Block(Block),
+    pub fn is_empty(&self) -> bool {
+        self.count == 0 || self.item == items::NOTHING || self.item.properties == ItemProperties::BlockItem(BlockItem { block: blocks::AIR })
+    }
 }
 
 pub struct ItemAtlas<'a> {
     pub texture: UniformBinding<Texture>,
     depth_texture: DepthTexture,
-    item_positions: HashMap<Item, Vector2<u32>>,
+    item_positions: HashMap<ItemId, Vector2<u32>>,
     block_renderer_shader: Shader<'a>,
     block_renderer_screen_info: UniformBinding<ScreenInfo>,
     block_renderer_transform_matrix: UniformBinding<[[f32; 4]; 4]>,
@@ -102,7 +101,7 @@ pub struct ItemAtlas<'a> {
 }
 
 impl <'a> ItemAtlas<'a> {
-    pub fn new(surface_ctx: &dyn SurfaceCtx, block_atlas: &UniformBinding<Texture>) -> Self {
+    pub fn new(surface_ctx: &dyn SurfaceCtx, block_atlas: &UniformBinding<Texture>, shader_consts: Vec<ResourceConst>) -> Self {
         let texture = UniformBinding::new(surface_ctx.device(), "Item Atlas", Texture::blank_texture(surface_ctx.device(), 64*4, 64*4, surface_ctx.config().format, 1), None);
         let block_renderer_screen_info = UniformBinding::new(surface_ctx.device(), "", ScreenInfo { 
             camera_raw: OrthographicCamera {
@@ -120,7 +119,7 @@ impl <'a> ItemAtlas<'a> {
             padding: 0.0,
          }, None);
         let block_renderer_transform_matrix = UniformBinding::new(surface_ctx.device(), "Block Renderer Transform Matrix", [[0.0; 4]; 4], None);
-        let block_renderer_shader = Shader::new_uniform("res/shaders/block_renderer.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&block_renderer_screen_info, block_atlas, &block_renderer_transform_matrix], vec![Vertex::desc()], ShaderConfig { multisample_count: 1, ..Default::default() });
+        let block_renderer_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_BLOCK_RENDERER_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&block_renderer_screen_info, block_atlas, &block_renderer_transform_matrix], shader_consts, vertex_buffers: vec![Vertex::desc()], multisample_count: 1, ..Default::default() }, surface_ctx.device());
         Self {
             item_positions: HashMap::new(),
             item_render_size: 64,
@@ -145,18 +144,19 @@ impl <'a> ItemAtlas<'a> {
     }
 
     pub fn get_or_insert_item(&mut self, item: &Item, block_atlas: &UniformBinding<Texture>, surface_ctx: &dyn SurfaceCtx) -> Vector2<u32> {
-        if let Some(position) = self.item_positions.get(item) {
+        if let Some(position) = self.item_positions.get(item.id) {
             return vec2(position.x, position.y);
         } else {
             let next_position = vec2((self.item_positions.len()) as u32 %self.items_per_row(), (self.item_positions.len()) as u32 /self.items_per_row());
             let fractional_position = vec2(next_position.x as f32 / self.items_per_row() as f32, next_position.y as f32 / self.num_rows() as f32);
             self.block_renderer_transform_matrix.set_data(surface_ctx.queue(), Self::viewport_subsection_matrix(fractional_position.x, fractional_position.y, self.fractional_item_size().x, self.fractional_item_size().y).into());
-            match item {
-                Item::Block(block) => {
-                    self.render_block(surface_ctx, *block, block_atlas);
-                }
+            match &item.properties {
+                ItemProperties::BlockItem(block_item) => {
+                    self.render_block(surface_ctx, block_item.block, block_atlas);
+                },
+                ItemProperties::Nothing => {},
             }
-            self.item_positions.insert(*item, next_position);
+            self.item_positions.insert(item.id, next_position);
             return next_position;
         }
     }

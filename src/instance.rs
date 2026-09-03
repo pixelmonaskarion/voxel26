@@ -40,9 +40,9 @@ impl ToRaw for Instance {
 }
 
 impl Descriptor for Instance {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+    fn desc<'a>() -> Option<wgpu::VertexBufferLayout<'a>> {
         use std::mem;
-        wgpu::VertexBufferLayout {
+        Some(wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
             // We need to switch from using a step mode of Vertex to Instance
             // This means that our shaders will only change to use the next
@@ -74,6 +74,6 @@ impl Descriptor for Instance {
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],
-        }
+        })
     }
 }

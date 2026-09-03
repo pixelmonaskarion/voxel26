@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use bespoke_engine::{InstanceTrait, binding::{Descriptor, UniformBinding}, compute::{ComputeOutput, ComputeShader}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::load_resource_string, shader::{Shader, ShaderConfig, ShaderType}, surface_context::SurfaceCtx, window::BasicVertex};
+use bespoke_engine::{InstanceTrait, binding::{Descriptor, UniformBinding}, compute::{ComputeOutput, ComputeShader}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::load_resource_string, shader::{Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, window::BasicVertex};
 use bytemuck::{Pod, Zeroable, bytes_of, checked::from_bytes};
 use cgmath::Vector3;
 use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, RenderPass, ShaderStages, TextureFormat, wgt::BufferDescriptor};
 
-use crate::game::ScreenInfo;
+use crate::{RES_SHADERS_PARTICLE_RENDERER_WGSL, game::ScreenInfo};
 
 pub struct ParticleManager<'a> {
     particles_buffer: Buffer,
@@ -93,9 +93,9 @@ impl <'a> ParticleManager<'a> {
 
         let num_instances_output = ComputeOutput::new(size_of::<u32>() as u64, &surface_ctx.device());
 
-        let update_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_update_shader.wgsl"), vec![&particles_layout, &particles_layout, &delta_seconds_uniform.layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "Particle".into()), &delta_seconds_uniform.shader_type], surface_ctx.device());
-        let instance_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_instance_shader.wgsl"), vec![&particles_layout, &particles_layout, &num_instances_output.layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "ParticleInstance".into())], surface_ctx.device());
-        let render_shader = Shader::new("res/shaders/particle_renderer.wgsl", surface_ctx.device(), deferred_formats, vec![&screen_info_binding.layout], vec![&screen_info_binding.shader_type], vec![BasicVertex::desc(), ParticleInstance::desc()], ShaderConfig::default());
+        let update_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_update_shader.wgsl"), vec![&particles_layout, &particles_layout, &delta_seconds_uniform.layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "Particle".into()), &delta_seconds_uniform.shader_type], vec![], surface_ctx.device());
+        let instance_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_instance_shader.wgsl"), vec![&particles_layout, &particles_layout, &num_instances_output.layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "ParticleInstance".into())], vec![], surface_ctx.device());
+        let render_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_PARTICLE_RENDERER_WGSL, formats: deferred_formats, uniforms: vec![screen_info_binding], vertex_buffers: vec![BasicVertex::desc(), ParticleInstance::desc()], ..Default::default() }, surface_ctx.device());
 
         let size = 0.1;
         let particle_model = Model::new(vec![
@@ -268,9 +268,9 @@ impl ToRaw for ParticleInstance {
 }
 
 impl Descriptor for ParticleInstance {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+    fn desc<'a>() -> Option<wgpu::VertexBufferLayout<'a>> {
         use std::mem;
-        wgpu::VertexBufferLayout {
+        Some(wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<ParticleInstanceRaw>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
@@ -285,6 +285,6 @@ impl Descriptor for ParticleInstance {
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],
-        }
+        })
     }
 }

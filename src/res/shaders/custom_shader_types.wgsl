@@ -29,6 +29,3 @@ struct DeferredFragmentOutput {
   @location(1) normal: vec4f,
   @location(2) worldspace: vec4f,
 }
-
-const ATLAS_X_BLOCKS: u32 = 16;
-const ATLAS_Y_BLOCKS: u32 = 16;

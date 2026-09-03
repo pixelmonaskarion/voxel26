@@ -3,7 +3,10 @@ use bytemuck::{NoUninit, bytes_of};
 use cgmath::{Vector2, vec2};
 use wgpu_text::glyph_brush::{HorizontalAlign, Layout, OwnedSection, OwnedText, VerticalAlign};
 
-use crate::{blocks::{ATLAS_X_BLOCKS, ATLAS_Y_BLOCKS}, inventory::Inventory};
+use crate::{inventory::Inventory};
+
+const ATLAS_X_BLOCKS: u32 = 16;
+const ATLAS_Y_BLOCKS: u32 = 16;
 
 #[repr(C)]
 #[derive(NoUninit, Copy, Clone, Default, Debug)]
@@ -14,8 +17,8 @@ pub struct UIVertex {
 }
 
 impl Descriptor for UIVertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
+    fn desc<'a>() -> Option<wgpu::VertexBufferLayout<'a>> {
+        Some(wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
@@ -35,7 +38,7 @@ impl Descriptor for UIVertex {
                     format: wgpu::VertexFormat::Float32x2,
                 },
             ],
-        }
+        })
     }
 }
 

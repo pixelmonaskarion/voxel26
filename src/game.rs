@@ -1,12 +1,12 @@
 use std::{collections::HashMap, f32::consts::PI, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::{load_resource, load_resource_string}, shader::{Shader, ShaderConfig, ShaderType}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture, TextureLayoutConfig}, window::{BasicVertex, MULTISAMPLE_COUNT, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
+use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::{ResourceConst, load_resource, load_resource_string}, shader::{PostProcessShaderInit, Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture, TextureLayoutConfig}, window::{BasicVertex, MULTISAMPLE_COUNT, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
 use bytemuck::{NoUninit, Pod, Zeroable, bytes_of};
 use cgmath::{InnerSpace, MetricSpace, Vector2, Vector3, Zero, vec2, vec3};
 use wgpu::{Color, CommandEncoder, Features, Limits, RenderPass, TextureFormat, wgt::CommandEncoderDescriptor};
 use wgpu_text::{BrushBuilder, TextBrush, glyph_brush::{Layout, OwnedSection, OwnedText, ab_glyph::FontVec}};
 use winit::{dpi::PhysicalPosition, event::{KeyEvent, Modifiers, MouseButton, TouchPhase, WindowEvent}, keyboard::{KeyCode, PhysicalKey::Code}};
-use crate::{RESOURCES, blocks::{AIR, get_block}, chunk::{CHUNK_SIZE, ChunkManager}, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, inventory::{Inventory, InventoryItemStack, Item, ItemAtlas, ItemStack}, particles::{Particle, ParticleManager, ParticleType}, player::Player, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, ui::{InventoryLocation, InventoryLocationMut, InventoryModel, OpenInventory, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, inventory_location, inventory_physical_size, mouse_tile_coords, text_sections_for_inventory}, util::{self, chunk_for_block_position, chunk_for_world_position}};
+use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, GENERATED_BLOCK_ATLAS_PNG, RES_SHADERS_BLUR_WGSL, RES_SHADERS_CHUNK_WGSL, RES_SHADERS_DEFERRED_COMBINE_WGSL, RES_SHADERS_ITEM_UI_WGSL, RES_SHADERS_POST_PROCESS_WGSL, RES_SHADERS_SSAO_WGSL, RES_SHADERS_UI_WGSL, RESOURCES, blocks::{AIR, get_block}, chunk::{CHUNK_SIZE, ChunkManager}, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, inventory::{Inventory, InventoryItemStack, ItemAtlas, ItemStack}, items::ItemProperties, particles::{Particle, ParticleManager, ParticleType}, player::Player, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, ui::{InventoryLocation, InventoryLocationMut, InventoryModel, OpenInventory, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, inventory_location, inventory_physical_size, mouse_tile_coords, text_sections_for_inventory}, util::{self, chunk_for_block_position, chunk_for_world_position}};
 
 const BLUR_STEPS: i32 = 11;
 
@@ -90,9 +90,9 @@ impl Vertex {
 }
 
 impl Descriptor for Vertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+    fn desc<'a>() -> Option<wgpu::VertexBufferLayout<'a>> {
         use std::mem;
-        wgpu::VertexBufferLayout {
+        Some(wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
@@ -112,7 +112,7 @@ impl Descriptor for Vertex {
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],
-        }
+        })
     }
 }
 
@@ -151,22 +151,30 @@ impl <'a> Game<'a> {
             sky: 0.0,
         };
         let screen_info_binding = UniformBinding::new(surface_ctx.device(), "Screen Info", ScreenInfo::new(screen_size, 0.0, camera.to_raw()), None);
-        let deferred_combine_shader = Shader::new_uniform("res/shaders/deferred_combine.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&deferred_color_output, &deferred_normal_output, &deferred_worldspace_output, surface_ctx.depth_texture(), &deferred_ssao_output, &screen_info_binding], vec![BasicVertex::desc()], ShaderConfig { depth_compare: wgpu::CompareFunction::Always,  ..Default::default() });
-        let ssao_shader = Shader::new_uniform("res/shaders/ssao.wgsl", surface_ctx.device(), vec![ssao_format], vec![&deferred_normal_resolve, &deferred_worldspace_resolve, &screen_info_binding, &ssao_kernel_samples, &random_texture], vec![BasicVertex::desc()], ShaderConfig {  enable_depth_texture: false, multisample_count: 1, ..Default::default() });
+        let deferred_combine_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_DEFERRED_COMBINE_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&deferred_color_output, &deferred_normal_output, &deferred_worldspace_output, surface_ctx.depth_texture(), &deferred_ssao_output, &screen_info_binding], vertex_buffers: vec![BasicVertex::desc()], depth_compare: wgpu::CompareFunction::Always,  ..Default::default() }, surface_ctx.device());
+        let ssao_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_SSAO_WGSL, formats: vec![ssao_format], uniforms: vec![&deferred_normal_resolve, &deferred_worldspace_resolve, &screen_info_binding, &ssao_kernel_samples, &random_texture], vertex_buffers: vec![BasicVertex::desc()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
         
         let blur_steps = UniformBinding::new(surface_ctx.device(), "Blur Steps", BLUR_STEPS, None);
         let blur_radius = UniformBinding::new(surface_ctx.device(), "Blur Radius", [1.0 / surface_ctx.size().0 as f32, 1.0 / surface_ctx.size().1 as f32], None);
         let blur_axis = UniformBinding::new(surface_ctx.device(), "Blur Axis", [0.0; 2], None);
         let blur_kernel = UniformBinding::new(surface_ctx.device(), "Blur Kernel", generate_blur_kernel(), None);
-        let ssao_blur_shader = Shader::new_uniform("res/shaders/blur.wgsl", surface_ctx.device(), vec![ssao_format], vec![&intermediate_ssao_texture, &blur_radius, &blur_steps, &blur_axis, &blur_kernel], vec![BasicVertex::desc()], ShaderConfig { enable_depth_texture: false, multisample_count: 1, ..Default::default() });
+        let ssao_blur_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_BLUR_WGSL, formats: vec![ssao_format], uniforms: vec![&intermediate_ssao_texture, &blur_radius, &blur_steps, &blur_axis, &blur_kernel], vertex_buffers: vec![BasicVertex::desc()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
 
         let mut chunk_manager = ChunkManager::new(surface_ctx);
         chunk_manager.get_chunk_or_create([0; 3]);
         chunk_manager.generate_blocks([0; 3], [0.0; 3]);
 
-        let post_processing_shader = Shader::new_post_process("res/shaders/post_process.wgsl", surface_ctx.device(), surface_ctx.config().format, vec![&create_layout::<Texture>(TextureLayoutConfig::default(), surface_ctx.device())], vec![&Texture::shader_type(TextureLayoutConfig::default())]);
-        let atlas_uniform = UniformBinding::new(surface_ctx.device(), "Atlas", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &load_resource("res/atlas.png").unwrap(), "Atlas", None, None).unwrap(), None);
-        let chunk_shader = Shader::new_uniform("res/shaders/chunk.wgsl", surface_ctx.device(), deferred_formats.clone(), vec![&screen_info_binding, &atlas_uniform], vec![Vertex::desc()], ShaderConfig { line_mode: wgpu::PolygonMode::Fill, ..Default::default() });
+        //TODO: don't assume they are all the same width and height
+        let shader_atlas_x_blocks = ResourceConst { name: "ATLAS_X_BLOCKS".into(), rtype: "u32".into(), value: (BLOCK_ATLAS_PNG_WIDTH / BLOCK_ATLAS_PNG_DIRT_SECTION.width).to_string() };
+        let shader_atlas_y_blocks  = ResourceConst { name: "ATLAS_Y_BLOCKS".into(), rtype: "u32".into(), value: (BLOCK_ATLAS_PNG_HEIGHT / BLOCK_ATLAS_PNG_DIRT_SECTION.height).to_string() };
+        println!("{shader_atlas_x_blocks:?}");
+        println!("{shader_atlas_y_blocks:?}");
+        let shader_atlas_x_ui = ResourceConst { name: "ATLAS_X_BLOCKS".into(), rtype: "u32".into(), value: 16.to_string() };
+        let shader_atlas_y_ui  = ResourceConst { name: "ATLAS_Y_BLOCKS".into(), rtype: "u32".into(), value: 16.to_string() };
+
+        let post_processing_shader = Shader::new(PostProcessShaderInit { resource: RES_SHADERS_POST_PROCESS_WGSL, formats: vec![surface_ctx.config().format], binding_layouts: vec![create_layout::<Texture>(TextureLayoutConfig::default(), surface_ctx.device())], shader_types: vec![Texture::shader_type(TextureLayoutConfig::default())], ..Default::default() }, surface_ctx.device());
+        let atlas_uniform = UniformBinding::new(surface_ctx.device(), "Atlas", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &GENERATED_BLOCK_ATLAS_PNG.load(), "Atlas", None, None).unwrap(), None);
+        let chunk_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_CHUNK_WGSL, formats: deferred_formats.clone(), uniforms: vec![&screen_info_binding, &atlas_uniform], vertex_buffers: vec![Vertex::desc()], shader_consts: vec![shader_atlas_x_blocks.clone(), shader_atlas_y_blocks.clone()], line_mode: wgpu::PolygonMode::Fill, ..Default::default() }, surface_ctx.device());
 
         let cube_outline_shader = cube_outline_shader(surface_ctx.device(), deferred_formats.clone(), &screen_info_binding);
         let cube_outline_model = None;
@@ -175,10 +183,10 @@ impl <'a> Game<'a> {
         let hotbar_background_ui_models = generate_hotbar_background_ui_models(surface_ctx, 0);
         let health_ui_models = generate_health_ui_models(surface_ctx, 20.0);
         let ui_texture_uniform = UniformBinding::new(surface_ctx.device(), "UI Textures", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &load_resource("res/ui.png").unwrap(), "UI", None, None).unwrap(), None);
-        let ui_shader = Shader::new_uniform("res/shaders/ui.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&ui_texture_uniform], vec![UIVertex::desc()], ShaderConfig { enable_depth_texture: false, multisample_count: 1, ..Default::default() });
+        let ui_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_UI_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&ui_texture_uniform], vertex_buffers: vec![UIVertex::desc()], shader_consts: vec![shader_atlas_x_ui.clone(), shader_atlas_y_ui.clone()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
         let hotbar_atlas_subsections_uniform = UniformBinding::new(surface_ctx.device(), "Atlas Subsection", DynamicOffsetUniform { values: [[0.0; 4]; 9], alignment: surface_ctx.device().limits().min_uniform_buffer_offset_alignment as usize }, None);
-        let mut item_atlas = ItemAtlas::new(surface_ctx, &atlas_uniform);
-        let item_ui_shader = Shader::new_uniform("res/shaders/item_ui.wgsl", surface_ctx.device(), vec![surface_ctx.config().format], vec![&item_atlas.texture, &hotbar_atlas_subsections_uniform], vec![UIVertex::desc()], ShaderConfig { enable_depth_texture: false, multisample_count: 1, ..Default::default() });
+        let mut item_atlas = ItemAtlas::new(surface_ctx, &atlas_uniform, vec![shader_atlas_x_blocks.clone(), shader_atlas_y_blocks.clone()]);
+        let item_ui_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_ITEM_UI_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&item_atlas.texture, &hotbar_atlas_subsections_uniform], vertex_buffers: vec![UIVertex::desc()], shader_consts: vec![shader_atlas_x_ui.clone(), shader_atlas_y_ui.clone()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
 
         let crosshair_model = generate_crosshair_ui_model(surface_ctx);
 
@@ -186,9 +194,10 @@ impl <'a> Game<'a> {
         let entity_render_manager = EntityRenderManager::new(surface_ctx, deferred_formats.clone());
         
         let text_brush = BrushBuilder::using_font(FontVec::try_from_vec(load_resource("res/unifont.ttf").unwrap()).unwrap()).build(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, surface_ctx.config().format);
-        let cursor_stack = InventoryItemStack::new(ItemStack::new(Item::Block(AIR), 0), &mut item_atlas, &atlas_uniform, surface_ctx);
+        let cursor_stack = InventoryItemStack::new(ItemStack::EMPTY, &mut item_atlas, &atlas_uniform, surface_ctx);
         let cursor_stack_model = Model::new_empty::<u16>(AABB::zero(), surface_ctx.device());
         let cursor_stack_subsection_uniform = UniformBinding::new(surface_ctx.device(), "Cursor Stack Subsection", DynamicOffsetUniform { values: [[0.0; 4]], alignment: surface_ctx.device().limits().min_uniform_buffer_offset_alignment as usize }, None);
+
         Self {
             deferred_color_output,
             deferred_normal_output,
@@ -509,10 +518,10 @@ impl <'s> Game<'s> {
                 if self.player.break_cooldown.is_zero() || self.new_mouse_down.contains(&MouseButton::Right) {
                     if let Some((coordinate, face)) = self.player.raycast(self.camera.get_forward_vec(), 6.0, &self.chunk_manager) {
                         #[allow(irrefutable_let_patterns)]
-                        if let Item::Block(block) = self.player.inventory.selected_item().stack.item && block != AIR {
+                        if let ItemProperties::BlockItem(block_item) = &self.player.inventory.selected_item().stack.item.properties && block_item.block != AIR {
                             let coordinate = (Vector3::from(coordinate)+face.direction()).into();
                             let before = self.chunk_manager.get_block(coordinate);
-                            self.chunk_manager.set_block(coordinate, block.id, true);
+                            self.chunk_manager.set_block(coordinate, block_item.block.id, true);
                             if self.player.colliding_world(&self.chunk_manager) {
                                 self.chunk_manager.set_block(coordinate, before, true);
                             } else {
@@ -541,12 +550,12 @@ impl <'s> Game<'s> {
                                 lifetime: Duration::from_secs_f32(20.0),
                             });
                         }
-                        self.chunk_manager.get_chunk_or_create(chunk_for_block_position(coordinate)).add_entity(Entity {
-                            entity_type: TypedEntity::Item { stack: InventoryItemStack::new(ItemStack::new(Item::Block(before_block), 1), &mut self.item_atlas, &self.atlas_uniform, surface_ctx) },
-                            position: Vector3::<i32>::from(coordinate).cast().unwrap()+vec3(0.5, 0.5, 0.5),
-                            velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*5.0).into(),
-                            time_alive: Duration::ZERO,
-                        });
+                        // self.chunk_manager.get_chunk_or_create(chunk_for_block_position(coordinate)).add_entity(Entity {
+                        //     entity_type: TypedEntity::Item { stack: InventoryItemStack::new(ItemStack::new(Item::Block(before_block), 1), &mut self.item_atlas, &self.atlas_uniform, surface_ctx) },
+                        //     position: Vector3::<i32>::from(coordinate).cast().unwrap()+vec3(0.5, 0.5, 0.5),
+                        //     velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*5.0).into(),
+                        //     time_alive: Duration::ZERO,
+                        // });
                         self.player.break_cooldown = Duration::from_secs_f32(0.2);
                     }
                 }

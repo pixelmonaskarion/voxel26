@@ -39,9 +39,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 
 fn fix_repeats(color: vec4f) -> vec2f {
-    let x_scaled = color.x*f32(ATLAS_X_BLOCKS);
+    let x_scaled = color.x*f32(16);
     let x_scaled_fract = fract(x_scaled);
-    let x = (floor(x_scaled)+fract(x_scaled_fract*color.z))/f32(ATLAS_X_BLOCKS);
+    let x = (floor(x_scaled)+fract(x_scaled_fract*color.z))/f32(16);
     let y_scaled = color.y*f32(ATLAS_Y_BLOCKS);
     let y_scaled_fract = fract(y_scaled);
     let y = (floor(y_scaled)+fract(y_scaled_fract*color.w))/f32(ATLAS_Y_BLOCKS);

@@ -7,7 +7,7 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, RenderPass};
 use itertools::Itertools;
 
-use crate::{block_models::{BlockModel, parse_model}, blocks::{self, AIR, ATLAS_X_BLOCKS, ATLAS_Y_BLOCKS, Block, BlockID, DIRT, GOLD, GRASS, NOT_RENDERED_LAYER, STONE, WATER}, entity::{Entity, EntityRenderManager, EntityType}, features::{Feature, bush::BushFeature, tree::TreeFeature}, game::Vertex, inventory::ItemAtlas, util::neighbors};
+use crate::{BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, block_models::{BlockModel, parse_model}, blocks::{self, AIR, Block, BlockID, DIRT, GOLD, GRASS, NOT_RENDERED_LAYER, STONE, WATER}, entity::{Entity, EntityRenderManager, EntityType}, features::{Feature, bush::BushFeature, tree::TreeFeature}, game::Vertex, inventory::ItemAtlas, util::neighbors};
 
 pub struct Chunk {
     blocks: Vec<BlockID>,
@@ -572,14 +572,16 @@ impl ChunkManager {
             let model = if let Some(model) = model_cache.get(&block.id) {
                 model
             } else {
-                let model = parse_model(block.id);
+                let model = parse_model(block);
                 model_cache.insert(block.id, model);
                 model_cache.get(&block.id).unwrap()
             };
             let chunk_x_f32 = chunk_position[0] as f32 * CHUNK_SIZE as f32;
             let chunk_y_f32 = chunk_position[1] as f32 * CHUNK_SIZE as f32;
             let chunk_z_f32 = chunk_position[2] as f32 * CHUNK_SIZE as f32;
-            modeled_vertices.extend(model.vertices.iter().map(|it| Vertex { position: [it.position[0]+position[0]as f32+chunk_x_f32, it.position[1]+position[1]as f32+chunk_y_f32, it.position[2]+position[2]as f32+chunk_z_f32, it.position[3]], color: [it.color[0]+block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, it.color[1]+block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, it.color[2], it.color[3]], normal: it.normal }));
+            let atlas_width_proportion = block.atlas_section.width as f32 / BLOCK_ATLAS_PNG_WIDTH as f32;
+            let atlas_height_proportion = block.atlas_section.height as f32 / BLOCK_ATLAS_PNG_HEIGHT as f32; 
+            modeled_vertices.extend(model.vertices.iter().map(|it| Vertex { position: [it.position[0]+position[0]as f32+chunk_x_f32, it.position[1]+position[1]as f32+chunk_y_f32, it.position[2]+position[2]as f32+chunk_z_f32, it.position[3]], color: [it.color[0]+block.atlas_section.x as f32 * atlas_width_proportion, it.color[1]+block.atlas_section.y as f32 * atlas_height_proportion, it.color[2], it.color[3]], normal: it.normal }));
             let num_indices = modeled_indices.len();
             modeled_indices.extend(model.indices.iter().map(|it| *it+num_indices as u32));
         }
@@ -649,12 +651,12 @@ impl ChunkManager {
                         // };
 
                         let c = block.color;
-                        let atlas_x = block.atlas_x;
-                        let atlas_y = block.atlas_y;
-                        let tex_width_x = 1.0/ATLAS_X_BLOCKS as f32;
-                        let tex_width_y = 1.0/ATLAS_Y_BLOCKS as f32;
-                        let tex_coords_offset_x = tex_width_x * atlas_x as f32;
-                        let tex_coords_offset_y = tex_width_y * atlas_y as f32;
+                        let atlas_x = block.atlas_section.x;
+                        let atlas_y = block.atlas_section.y;
+                        let tex_width_x = block.atlas_section.width as f32 / BLOCK_ATLAS_PNG_WIDTH as f32;
+                        let tex_width_y = block.atlas_section.height as f32 / BLOCK_ATLAS_PNG_HEIGHT as f32;
+                        let tex_coords_offset_x = atlas_x as f32 / BLOCK_ATLAS_PNG_WIDTH as f32;
+                        let tex_coords_offset_y = atlas_y as f32 / BLOCK_ATLAS_PNG_HEIGHT as f32;
                         let chunk_x_f32 = chunk_position[0] as f32 * CHUNK_SIZE as f32;
                         let chunk_y_f32 = chunk_position[1] as f32 * CHUNK_SIZE as f32;
                         let chunk_z_f32 = chunk_position[2] as f32 * CHUNK_SIZE as f32;

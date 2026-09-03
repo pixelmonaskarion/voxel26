@@ -1,0 +1,12 @@
+{
+    "pattern": [
+        "   ",
+        " W ",
+        "   "
+    ],
+    "result": "P",
+    "substitutions": {
+        "W": "wood",
+        "P": "planks"
+    }
+}

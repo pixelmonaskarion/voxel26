@@ -28,6 +28,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 
 [build-dependencies]
 bespoke-engine = { path = "../bespoke-engine" }
+image = "0.25.10"
 
 [[bin]]
 name = "voxel26"

@@ -2,138 +2,140 @@ use bespoke_engine::{culling::AABB, model::Model, resource_loader::load_resource
 use cgmath::Vector3;
 use serde::Deserialize;
 
-use crate::{blocks::{ATLAS_X_BLOCKS, ATLAS_Y_BLOCKS, Block, BlockID}, game::Vertex};
+use crate::{BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, blocks::Block, game::Vertex};
 
 pub fn block_model(surface_ctx: &dyn SurfaceCtx, block: Block) -> Model {
     let BlockModel { vertices, indices } = if block.has_model {
-        parse_model(block.id)
+        parse_model(block)
     } else {
+        let atlas_width_proportion = 1.0 / BLOCK_ATLAS_PNG_WIDTH as f32;
+        let atlas_height_proportion = 1.0 / BLOCK_ATLAS_PNG_HEIGHT as f32;
         let vertices = vec![
             // north
             Vertex {
                 position: [1.0, 0.0, 0.0, 1.0],
                 normal: [0.0, 0.0, -1.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 0.0, 0.0, 1.0],
                 normal: [0.0, 0.0, -1.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 1.0, 0.0, 1.0],
                 normal: [0.0, 0.0, -1.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [1.0, 1.0, 0.0, 1.0],
                 normal: [0.0, 0.0, -1.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // south
             Vertex {
                 position: [0.0, 0.0, 1.0, 1.0],
                 normal: [0.0, 0.0, 1.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [1.0, 0.0, 1.0, 1.0],
                 normal: [0.0, 0.0, 1.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [1.0, 1.0, 1.0, 1.0],
                 normal: [0.0, 0.0, 1.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 1.0, 1.0, 1.0],
                 normal: [0.0, 0.0, 1.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // east
             Vertex {
                 position: [1.0, 0.0, 1.0, 1.0],
                 normal: [1.0, 0.0, 0.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [1.0, 0.0, 0.0, 1.0],
                 normal: [1.0, 0.0, 0.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [1.0, 1.0, 0.0, 1.0],
                 normal: [1.0, 0.0, 0.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [1.0, 1.0, 1.0, 1.0],
                 normal: [1.0, 0.0, 0.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // west
             Vertex {
                 position: [0.0, 0.0, 0.0, 1.0],
                 normal: [-1.0, 0.0, 0.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 0.0, 1.0, 1.0],
                 normal: [-1.0, 0.0, 0.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 1.0, 1.0, 1.0],
                 normal: [-1.0, 0.0, 0.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 1.0, 0.0, 1.0],
                 normal: [-1.0, 0.0, 0.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // up
             Vertex {
                 position: [1.0, 1.0, 0.0, 1.0],
                 normal: [0.0, 1.0, 0.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 1.0, 0.0, 1.0],
                 normal: [0.0, 1.0, 0.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 1.0, 1.0, 1.0],
                 normal: [0.0, 1.0, 0.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [1.0, 1.0, 1.0, 1.0],
                 normal: [0.0, 1.0, 0.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // down
             Vertex {
                 position: [1.0, 0.0, 1.0, 1.0],
                 normal: [0.0, -1.0, 0.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 0.0, 1.0, 1.0],
                 normal: [0.0, -1.0, 0.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, block.atlas_y as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [0.0, 0.0, 0.0, 1.0],
                 normal: [0.0, -1.0, 0.0, 0.0],
-                color: [block.atlas_x as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
                 position: [1.0, 0.0, 0.0, 1.0],
                 normal: [0.0, -1.0, 0.0, 0.0],
-                color: [(block.atlas_x + 1) as f32 / ATLAS_X_BLOCKS as f32, (block.atlas_y + 1) as f32 / ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+                color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
         ];
         let indices = vec![
@@ -193,11 +195,14 @@ pub struct BlockModel {
     pub indices: Vec<u32>,
 }
 
-pub fn parse_model(id: BlockID) -> BlockModel {
-    let definition_json = load_resource_string(&format!("res/models/{id}.json"));
+pub fn parse_model(block: Block) -> BlockModel {
+    let definition_json = load_resource_string(&format!("res/models/{}.json", block.id));
     let definition: ModelDefinition = serde_json::from_str(&definition_json).unwrap();
     let mut vertices = vec![];
     let mut indices = vec![];
+
+    let atlas_width_proportion = block.atlas_section.width as f32 / BLOCK_ATLAS_PNG_WIDTH as f32;
+    let atlas_height_proportion = block.atlas_section.height as f32 / BLOCK_ATLAS_PNG_HEIGHT as f32;
 
     for element in definition.elements {
         let from: Vector3<f32> = Vector3::from(element.from).cast().unwrap();
@@ -208,22 +213,22 @@ pub fn parse_model(id: BlockID) -> BlockModel {
         vertices.push(Vertex {
             position: [to.x * scale, from.y * scale, from.z * scale, 1.0],
             normal: [0.0, 0.0, -1.0, 0.0],
-            color: [element.faces.north.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.north.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.north.uv[2] as f32 * scale*atlas_width_proportion, element.faces.north.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, from.y * scale, from.z * scale, 1.0],
             normal: [0.0, 0.0, -1.0, 0.0],
-            color: [element.faces.north.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.north.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.north.uv[0] as f32 * scale*atlas_width_proportion, element.faces.north.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, to.y * scale, from.z * scale, 1.0],
             normal: [0.0, 0.0, -1.0, 0.0],
-            color: [element.faces.north.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.north.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.north.uv[0] as f32 * scale*atlas_width_proportion, element.faces.north.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [to.x * scale, to.y * scale, from.z * scale, 1.0],
             normal: [0.0, 0.0, -1.0, 0.0],
-            color: [element.faces.north.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.north.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.north.uv[2] as f32 * scale*atlas_width_proportion, element.faces.north.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         }); 
         indices.extend_from_slice(&[
             vertices.len() as u32 - 4,
@@ -237,22 +242,22 @@ pub fn parse_model(id: BlockID) -> BlockModel {
         vertices.push(Vertex {
             position: [from.x * scale, from.y * scale, to.z * scale, 1.0],
             normal: [0.0, 0.0, 1.0, 0.0],
-            color: [element.faces.south.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.south.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.south.uv[2] as f32 * scale*atlas_width_proportion, element.faces.south.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [to.x * scale, from.y * scale, to.z * scale, 1.0],
             normal: [0.0, 0.0, 1.0, 0.0],
-            color: [element.faces.south.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.south.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.south.uv[0] as f32 * scale*atlas_width_proportion, element.faces.south.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [to.x * scale, to.y * scale, to.z * scale, 1.0],
             normal: [0.0, 0.0, 1.0, 0.0],
-            color: [element.faces.south.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.south.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.south.uv[0] as f32 * scale*atlas_width_proportion, element.faces.south.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, to.y * scale, to.z * scale, 1.0],
             normal: [0.0, 0.0, 1.0, 0.0],
-            color: [element.faces.south.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.south.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.south.uv[2] as f32 * scale*atlas_width_proportion, element.faces.south.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         indices.extend_from_slice(&[
             vertices.len() as u32 - 4,
@@ -266,22 +271,22 @@ pub fn parse_model(id: BlockID) -> BlockModel {
         vertices.push(Vertex {
             position: [to.x * scale, from.y * scale, to.z * scale, 1.0],
             normal: [1.0, 0.0, 0.0, 0.0],
-            color: [element.faces.east.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.east.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.east.uv[2] as f32 * scale*atlas_width_proportion, element.faces.east.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [to.x * scale, from.y * scale, from.z * scale, 1.0],
             normal: [1.0, 0.0, 0.0, 0.0],
-            color: [element.faces.east.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.east.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.east.uv[0] as f32 * scale*atlas_width_proportion, element.faces.east.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [to.x * scale, to.y * scale, from.z * scale, 1.0],
             normal: [1.0, 0.0, 0.0, 0.0],
-            color: [element.faces.east.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.east.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.east.uv[0] as f32 * scale*atlas_width_proportion, element.faces.east.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [to.x * scale, to.y * scale, to.z * scale, 1.0],
             normal: [1.0, 0.0, 0.0, 0.0],
-            color: [element.faces.east.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.east.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.east.uv[2] as f32 * scale*atlas_width_proportion, element.faces.east.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         indices.extend_from_slice(&[
             vertices.len() as u32 - 4,
@@ -295,22 +300,22 @@ pub fn parse_model(id: BlockID) -> BlockModel {
         vertices.push(Vertex {
             position: [from.x * scale, from.y * scale, from.z * scale, 1.0],
             normal: [-1.0, 0.0, 0.0, 0.0],
-            color: [element.faces.west.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.west.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.west.uv[2] as f32 * scale*atlas_width_proportion, element.faces.west.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, from.y * scale, to.z * scale, 1.0],
             normal: [-1.0, 0.0, 0.0, 0.0],
-            color: [element.faces.west.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.west.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.west.uv[0] as f32 * scale*atlas_width_proportion, element.faces.west.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, to.y * scale, to.z * scale, 1.0],
             normal: [-1.0, 0.0, 0.0, 0.0],
-            color: [element.faces.west.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.west.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.west.uv[0] as f32 * scale*atlas_width_proportion, element.faces.west.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, to.y * scale, from.z * scale, 1.0],
             normal: [-1.0, 0.0, 0.0, 0.0],
-            color: [element.faces.west.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.west.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.west.uv[2] as f32 * scale*atlas_width_proportion, element.faces.west.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         indices.extend_from_slice(&[
             vertices.len() as u32 - 4,
@@ -324,22 +329,22 @@ pub fn parse_model(id: BlockID) -> BlockModel {
         vertices.push(Vertex {
             position: [to.x * scale, to.y * scale, from.z * scale, 1.0],
             normal: [0.0, 1.0, 0.0, 0.0],
-            color: [element.faces.up.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.up.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.up.uv[2] as f32 * scale*atlas_width_proportion, element.faces.up.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, to.y * scale, from.z * scale, 1.0],
             normal: [0.0, 1.0, 0.0, 0.0],
-            color: [element.faces.up.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.up.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.up.uv[0] as f32 * scale*atlas_width_proportion, element.faces.up.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, to.y * scale, to.z * scale, 1.0],
             normal: [0.0, 1.0, 0.0, 0.0],
-            color: [element.faces.up.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.up.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.up.uv[0] as f32 * scale*atlas_width_proportion, element.faces.up.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [to.x * scale, to.y * scale, to.z * scale, 1.0],
             normal: [0.0, 1.0, 0.0, 0.0],
-            color: [element.faces.up.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.up.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.up.uv[2] as f32 * scale*atlas_width_proportion, element.faces.up.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         indices.extend_from_slice(&[
             vertices.len() as u32 - 4,
@@ -353,22 +358,22 @@ pub fn parse_model(id: BlockID) -> BlockModel {
         vertices.push(Vertex {
             position: [to.x * scale, from.y * scale, to.z * scale, 1.0],
             normal: [0.0, -1.0, 0.0, 0.0],
-            color: [element.faces.down.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.down.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.down.uv[2] as f32 * scale*atlas_width_proportion, element.faces.down.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, from.y * scale, to.z * scale, 1.0],
             normal: [0.0, -1.0, 0.0, 0.0],
-            color: [element.faces.down.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.down.uv[1] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.down.uv[0] as f32 * scale*atlas_width_proportion, element.faces.down.uv[1] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [from.x * scale, from.y * scale, from.z * scale, 1.0],
             normal: [0.0, -1.0, 0.0, 0.0],
-            color: [element.faces.down.uv[0] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.down.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.down.uv[0] as f32 * scale*atlas_width_proportion, element.faces.down.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         vertices.push(Vertex {
             position: [to.x * scale, from.y * scale, from.z * scale, 1.0],
             normal: [0.0, -1.0, 0.0, 0.0],
-            color: [element.faces.down.uv[2] as f32 * scale/ATLAS_X_BLOCKS as f32, element.faces.down.uv[3] as f32 * scale/ATLAS_Y_BLOCKS as f32, 1.0, 1.0],
+            color: [element.faces.down.uv[2] as f32 * scale*atlas_width_proportion, element.faces.down.uv[3] as f32 * scale*atlas_height_proportion, 1.0, 1.0],
         });
         indices.extend_from_slice(&[
             vertices.len() as u32 - 4,

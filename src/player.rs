@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bespoke_engine::{binding::UniformBinding, surface_context::SurfaceCtx, texture::Texture};
-use cgmath::{InnerSpace, Vector3, vec2, vec3};
+use cgmath::{InnerSpace, Vector3, vec3};
 
 use crate::{blocks::solid_block, chunk::ChunkManager, inventory::{Inventory, ItemAtlas}};
 
