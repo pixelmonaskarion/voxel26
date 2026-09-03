@@ -44,3 +44,10 @@ path = "src/ios.rs"
 # build_targets = ["armv7-linux-androideabi", "aarch64-linux-android"]
 # target_sdk_version = 29
 # min_sdk_version = 23
+
+# [profile.release]
+# # opt-level = "z"     # Optimize for size, aggressively reducing binary footprint
+# lto = true          # Enable Link-Time Optimization across all crates
+# # codegen-units = 1   # Reduce parallel code generation units to maximize optimization
+# panic = "abort"     # Strip panic unwinding logic (removes stack traces)
+# strip = true        # Automatically strip debug symbols and symbol tables

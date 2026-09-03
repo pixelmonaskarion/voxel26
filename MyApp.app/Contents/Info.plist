@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>my_app</string>
+    <string>voxel26</string>
     <key>CFBundleIdentifier</key>
-    <string>com.yourcompany.myapp</string>
+    <string>com.chrissytopher.voxel26</string>
     <key>CFBundleName</key>
-    <string>MyApp</string>
+    <string>Voxel26</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
