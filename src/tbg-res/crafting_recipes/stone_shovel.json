@@ -1,0 +1,13 @@
+{
+    "pattern": [
+        " P ",
+        " S ",
+        " S "
+    ],
+    "result": "X",
+    "substitutions": {
+        "S": "stick",
+        "P": "cobblestone_block",
+        "X": "stone_shovel"
+    }
+}

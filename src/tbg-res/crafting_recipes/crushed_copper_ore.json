@@ -1,0 +1,16 @@
+{
+    "pattern": [
+        "   ",
+        " T ",
+        " O "
+    ],
+    "result": "C",
+    "substitutions": {
+        "T": {
+            "id": "#hammers",
+            "tool": true
+        },
+        "O": "copper_ore_block",
+        "C": "crushed_copper_ore"
+    }
+}

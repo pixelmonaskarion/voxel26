@@ -2,7 +2,7 @@ use bespoke_engine::{binding::{Descriptor, UniformBinding}, culling::AABB, model
 use cgmath::{InnerSpace, Matrix, Matrix3, Matrix4, SquareMatrix, Vector3, Vector4};
 use wgpu::{Device, TextureFormat};
 
-use crate::{RES_SHADERS_CUBE_OUTLINE_WGSL, game::{ScreenInfo, Vertex}, instance::Instance};
+use crate::{RES_SHADERS_CUBE_OUTLINE_WGSL, const_block_models::Vertex, game::ScreenInfo, instance::Instance};
 
 pub fn cube_outline_shader<'a>(device: &Device, formats: Vec<TextureFormat>, screen_info_binding: &UniformBinding<ScreenInfo>) -> Shader<'a> {
     let resource = RES_SHADERS_CUBE_OUTLINE_WGSL;

@@ -19,6 +19,9 @@ mod ssao;
 mod items;
 mod registries;
 mod crafting;
+mod game_serializer;
+mod tags;
+mod const_block_models;
 
 include!(concat!(env!("OUT_DIR"), "/resources.rs"));
 

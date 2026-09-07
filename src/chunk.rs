@@ -1,21 +1,33 @@
 use std::{collections::HashMap, hash::{DefaultHasher, Hash, Hasher}, ops::{AddAssign, Mul}, sync::{Arc, mpsc}, time::{Duration, SystemTime}};
 
 use bespoke_engine::{model::Render, shader::Shader, surface_context::SurfaceCtx};
-use cgmath::{InnerSpace, MetricSpace, Vector3, vec2, vec3};
+use cgmath::{InnerSpace, MetricSpace, Vector2, Vector3, vec2, vec3};
 use noise::{NoiseFn, Perlin};
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use serde::{Deserialize, Serialize};
+use serde_inline_default::serde_inline_default;
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, RenderPass};
 use itertools::Itertools;
 
-use crate::{BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, block_models::{BlockModel, parse_model}, blocks::{AIR, Block, BlockID, DIRT, GOLD, GRASS, NOT_RENDERED_LAYER, STONE, WATER}, entity::{Entity, EntityRenderManager, EntityType}, features::{Feature, bush::BushFeature, tree::TreeFeature}, game::Vertex, registries::Registries, util::neighbors};
+use crate::{BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, blocks::{self, AIR, Block, BlockID, DIRT, GRASS, NOT_RENDERED_LAYER, STONE, WATER}, const_block_models::{BlockModel, BlockModelTrait, Vertex}, entity::{Entity, EntityRenderManager, EntityType}, features::{Feature, FeatureType, bush::BushFeature, caves::WormCavesFeature, ore::OreFeature, tree::TreeFeature}, registries::Registries, util::{chunk_for_block_position, neighbors}};
 
+#[derive(Serialize, Deserialize)]
+#[serde_inline_default]
 pub struct Chunk {
-    blocks: Vec<BlockID>,
-    generated_blocks: bool,
-    model: Option<ChunkModel>,
+    pub blocks: Vec<BlockID>,
+    pub generated_blocks: bool,
+    #[serde(skip)]
+    #[serde_inline_default(None)]
+    pub model: Option<ChunkModel>,
+    #[serde(skip)]
+    #[serde_inline_default(false)]
+    pub creating_model: bool,
+    #[serde(skip)]
     pub entities: HashMap<EntityType, Vec<Entity>>,
+    #[serde(skip)]
     pub needed_chunk_updates: Vec<NeededChunkUpdate>,
-    // transparency_model: Option<ChunkModel>,
+    #[serde_inline_default(0)]
+    pub lod: i32,
 }
 
 pub struct ChunkModel {
@@ -29,6 +41,7 @@ pub struct ChunkModel {
     num_modeled_indices: usize,
 }
 
+#[derive(Clone)]
 pub struct NeededChunkUpdate {
     pub relative_chunk_pos: Vector3<i32>,
     pub synchronous: bool,
@@ -47,9 +60,11 @@ impl Chunk {
         let mut _self = Self {
             blocks: vec![0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize],
             generated_blocks: false,
+            creating_model: false,
             model: None,
             entities: HashMap::new(),
             needed_chunk_updates: vec![],
+            lod: 0,
         };
         _self
     }
@@ -166,10 +181,12 @@ struct GenerateChunkMeshRequest {
 struct GenerateChunkModelResponse {
     chunk_position: [i32; 3],
     chunk_model: Option<ChunkModel>,
+    lod: i32,
 }
 
 pub struct ChunkManager {
     chunks: ChunkMap,
+    pub pending_requests: i32,
     gen_blocks_tx: mpsc::Sender<GenerateChunkBlocksRequest>,
     gen_blocks_rx: mpsc::Receiver<GenerateChunkBlocksResponse>,
     gen_model_tx: mpsc::Sender<GenerateChunkMeshRequest>,
@@ -177,18 +194,18 @@ pub struct ChunkManager {
 }
 #[allow(unused)]
 impl ChunkManager {
-    pub fn new(registries: Arc<Registries>, surface_ctx: &dyn SurfaceCtx) -> Self {
+    pub fn new(seed: u32, registries: Arc<Registries>, surface_ctx: &dyn SurfaceCtx) -> Self {
         let (gen_blocks_req_tx, gen_blocks_req_rx) = mpsc::channel::<GenerateChunkBlocksRequest>();
         let (gen_blocks_res_tx, gen_blocks_res_rx) = mpsc::channel();
         let (gen_model_req_tx, gen_model_req_rx) = mpsc::channel::<GenerateChunkMeshRequest>();
         let (gen_model_res_tx, gen_model_res_rx) = mpsc::channel();
         let device = surface_ctx.device_arc().clone();
-        let seed = rand::random();
         tokio::spawn(async move {
             let mut n = 0;
             let mut t = Duration::ZERO;
             let mut queue: Vec<GenerateChunkBlocksRequest> = Vec::new();
             let mut player_position: [f32; 3];
+            let mut resources = ChunkBlockGeneratorResources::new(seed);
             loop {
                 match gen_blocks_req_rx.recv() {
                     Ok(req) => {
@@ -201,12 +218,15 @@ impl ChunkManager {
                 }
                 while let Some(req) = queue.pop() {
                     let start = SystemTime::now();
-                    gen_blocks_res_tx.send(Self::generate_blocks_req(req, seed)).unwrap();
+                    let Ok(_) = gen_blocks_res_tx.send(Self::generate_blocks_req(req, &mut resources, None::<fn(Vec<f64>)>)) else {
+                        println!("ending block generator");
+                        return;
+                    };
                     t += SystemTime::now().duration_since(start).unwrap();
                     n += 1;
                     if n % 1000 == 999 {
-                        // let avg = t/n;
-                        // println!("avg gen blocks: {avg:?}");
+                        let avg = t/n;
+                        println!("avg gen blocks: {avg:?}");
                     }
                     while let Ok(req) = gen_blocks_req_rx.try_recv() {
                         queue.insert(queue.iter().find_position(|it| Self::chunk_distance2_by_world(&it.chunk_position, player_position) < Self::chunk_distance2_by_world(&req.chunk_position, player_position)).map(|it| it.0).unwrap_or(0), req);
@@ -231,12 +251,15 @@ impl ChunkManager {
                 }
                 while let Some(req) = queue.pop() {
                     let start = SystemTime::now();
-                    gen_model_res_tx.send(Self::generate_mesh_req(req, &device, &registries)).unwrap();
+                    let Ok(_) = gen_model_res_tx.send(Self::generate_mesh_req(req, &device, &registries)) else {
+                        println!("ending mesh generator");
+                        return
+                    };
                     t += SystemTime::now().duration_since(start).unwrap();
                     n += 1;
                     if n % 1000 == 999 {
-                        // let avg = t/n;
-                        // println!("avg gen mesh: {avg:?}");
+                        let avg = t/n;
+                        println!("avg gen mesh: {avg:?}");
                         t = Duration::ZERO;
                         n = 0;
                     }
@@ -252,41 +275,47 @@ impl ChunkManager {
             gen_blocks_rx: gen_blocks_res_rx,
             gen_model_tx: gen_model_req_tx,
             gen_model_rx: gen_model_res_rx,
+            pending_requests: 0,
         }
     }
 
     pub fn poll_channels(&mut self, player_position: [f32; 3]) {
         while let Ok(res) = self.gen_blocks_rx.try_recv() {
+            self.pending_requests -= 1;
             if let Some(chunk) = self.chunks.get_mut(res.chunk_position) {
                 chunk.blocks = res.chunk_blocks;
                 chunk.generated_blocks = true;
-                self.generate_model(res.chunk_position, player_position);
-                for chunk_position in neighbors(res.chunk_position) {
-                    self.generate_model(chunk_position, player_position);
-                }
+                chunk.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 0, 0), synchronous: false });
+                chunk.needed_chunk_updates.extend(neighbors([0; 3]).into_iter().map(|it| NeededChunkUpdate { relative_chunk_pos: it.into(), synchronous: false }));
             }
         }
         while let Ok(res) = self.gen_model_rx.try_recv() {
+            self.pending_requests -= 1;
             if let Some(chunk) = self.chunks.get_mut(res.chunk_position) {
                 chunk.model = res.chunk_model;
+                chunk.creating_model = false;
+                chunk.lod = res.lod;
                 // chunk.transparency_model = res.transparency_model;
             }
         }
     }
 
-    pub fn generate_blocks(&self, chunk_position: [i32; 3], player_position: [f32; 3]) {
+    pub fn generate_blocks(&mut self, chunk_position: [i32; 3], player_position: [f32; 3]) {
+        self.pending_requests += 1;
         self.gen_blocks_tx.send(GenerateChunkBlocksRequest {
             chunk_position,
             player_position,
         }).unwrap();
     }
 
-    pub fn generate_model(&self, chunk_position: [i32; 3], player_position: [f32; 3]) {
-        if let Some(chunk_blocks) = self.chunks.get(chunk_position).map(|it| it.blocks.clone()) {
+    pub fn generate_model(&mut self, chunk_position: [i32; 3], player_position: [f32; 3]) {
+        if let Some(chunk) = self.chunks.get_mut(chunk_position) {
+            self.pending_requests += 1;
+            chunk.creating_model = true;
             self.gen_model_tx.send(GenerateChunkMeshRequest {
                 chunk_position,
                 player_position,
-                chunk_blocks,
+                chunk_blocks: chunk.blocks.clone(),
                 cpx: self.chunks.get([chunk_position[0]+1, chunk_position[1], chunk_position[2]]).map(|it| it.blocks.clone()),
                 cnx: self.chunks.get([chunk_position[0]-1, chunk_position[1], chunk_position[2]]).map(|it| it.blocks.clone()),
                 cpy: self.chunks.get([chunk_position[0], chunk_position[1]+1, chunk_position[2]]).map(|it| it.blocks.clone()),
@@ -297,7 +326,7 @@ impl ChunkManager {
         }
     }
 
-    pub fn generate_model_and_surroundings(&self, chunk_position: [i32; 3], player_position: [f32; 3]) {
+    pub fn generate_model_and_surroundings(&mut self, chunk_position: [i32; 3], player_position: [f32; 3]) {
         self.generate_model(chunk_position, player_position);
         for position in neighbors(chunk_position) {
             self.generate_model(position, player_position);
@@ -355,61 +384,42 @@ impl ChunkManager {
     //     *chunk.model.num_indices.lock().await = indices.len();
     // }
 
-    fn generate_blocks_req(req: GenerateChunkBlocksRequest, seed: u32) -> GenerateChunkBlocksResponse {
+    fn generate_blocks_req(req: GenerateChunkBlocksRequest, resources: &mut ChunkBlockGeneratorResources, callback: Option<impl FnMut(Vec<f64>)>) -> GenerateChunkBlocksResponse {
         let mut blocks = vec![0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize];
-        let noises = (0..8).map(|i| Perlin::new(seed+i)).collect::<Vec<_>>();
-        let chunk_size1 = CHUNK_SIZE as usize + 1;
-        let mut noise_map = vec![0.0; (chunk_size1*chunk_size1)*(noises.len()+1)];
-        for x in 0..chunk_size1 {
-            for z in 0..chunk_size1 {
-                let mut position_scale = 2000.0;
-                let mut height_scale = 300.0;
-                let mut height = 0.0;
-                let xf64 = x as f64 + req.chunk_position[0] as f64 * CHUNK_SIZE as f64;
-                let zf64 = z as f64 + req.chunk_position[2] as f64 * CHUNK_SIZE as f64;
-                let mut noise_gradient = vec2(0.0, 0.0);
-                for (noise_i, noise) in noises.iter().enumerate() {
-                    position_scale *= 0.6;
-                    height_scale *= 0.5;
-                    let noise_here = if x == 0 && z == 0 {
-                        let noise = noise.get([xf64 / position_scale, zf64 / position_scale]);
-                        noise_map[noise_i] = noise;
-                        noise
-                    } else {
-                        noise_map[x as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noise_i]
-                    };
-                    let noise_px = noise.get([(xf64+1.0) / position_scale, (zf64) / position_scale]);
-                    if x != CHUNK_SIZE as usize {
-                        noise_map[(x+1) as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noise_i] = noise_px;
-                    }
-                    let noise_pz = noise.get([(xf64) / position_scale, (zf64+1.0) / position_scale]);
-                    if z != CHUNK_SIZE as usize {
-                        noise_map[x as usize * chunk_size1 * (noises.len()+1) + (z+1) as usize * (noises.len()+1) + noise_i] = noise_pz;
-                    }
-                    noise_gradient += vec2(noise_here-noise_px, noise_here-noise_pz)/position_scale;
-                    height += noise_here * height_scale * 1.0/(1.0+noise_gradient.magnitude());
+        if let Some(mut callback) = callback {
+            let mut heights = vec![0.0; CHUNK_SIZE as usize * CHUNK_SIZE as usize];
+            for x in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    let height = resources.height_at(x as i32 +req.chunk_position[0]*CHUNK_SIZE as i32, z as i32 +req.chunk_position[2]*CHUNK_SIZE as i32, true).height;
+                    heights[(x * CHUNK_SIZE + z) as usize] = height;
                 }
-                noise_map[x as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()] = height;
             }
+            callback(heights);
         }
+        let mut max_cave = 0.0;
+        let mut min_cave = 0.0;
         for x in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
-                let height = noise_map[x as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()];
-                let height_px = noise_map[(x+1) as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()];
-                let height_pz = noise_map[x as usize * chunk_size1 * (noises.len()+1) + (z+1) as usize * (noises.len()+1) + noises.len()];
-                let height_gradient = vec2(height_px-height, height_pz-height);
+                let HeightAt { height, gradient } = resources.height_at(x as i32 +req.chunk_position[0]*CHUNK_SIZE as i32, z as i32 +req.chunk_position[2]*CHUNK_SIZE as i32, true);
                 for y in 0..CHUNK_SIZE {
+                    let xf64 = x as f64 + req.chunk_position[0] as f64 * CHUNK_SIZE as f64;
                     let yf64 = y as f64+req.chunk_position[1] as f64 *(CHUNK_SIZE as f64);
+                    let zf64 = z as f64 + req.chunk_position[2] as f64 * CHUNK_SIZE as f64;
+                    let cave_position_scale = 20.0;
+                    let cave_noise = (resources.cave_noise.get([xf64 / cave_position_scale, yf64 / cave_position_scale, zf64 / cave_position_scale ])+1.0)/2.0;
+                    if cave_noise > max_cave {
+                        max_cave = cave_noise
+                    }
+                    if cave_noise < min_cave {
+                        min_cave = cave_noise
+                    }
+                    let cave_here = cave_noise > 0.90;
                     if yf64 <= height {
-                        if yf64+5.0 < height || height_gradient.magnitude() > 0.5 {
-                            if rand::random_range(0..10000) == 0 {
-                                blocks[index_in_chunk(x, y, z)] = GOLD;    
-                            } else {
-                                blocks[index_in_chunk(x, y, z)] = STONE;
-                            }
+                        if yf64+5.0 < height || gradient.magnitude() > 0.5 {
+                            blocks[index_in_chunk(x, y, z)] = STONE;
                         } else if yf64+1.0 < height {
                             blocks[index_in_chunk(x, y, z)] = DIRT;
-                        }else {
+                        } else {
                             blocks[index_in_chunk(x, y, z)] = GRASS;
                         }
                     } else {
@@ -419,43 +429,37 @@ impl ChunkManager {
                             blocks[index_in_chunk(x, y, z)] = AIR;
                         }
                     }
+                    if cave_here && blocks[index_in_chunk(x, y, z)] != WATER {
+                        blocks[index_in_chunk(x, y, z)] = AIR;
+                    }
                 }
             }
         }
-        fn height_at(x: i32, z: i32, seed: u32) -> f64 {
-            let noises = (0..8).map(|i| Perlin::new(seed+i)).collect::<Vec<_>>();
-            let mut position_scale = 2000.0;
-            let mut height_scale = 300.0;
-            let mut height = 0.0;
-            let xf64 = x as f64;
-            let zf64 = z as f64;
-            let mut noise_gradient = vec2(0.0, 0.0);
-            for noise in noises {
-                position_scale *= 0.6;
-                height_scale *= 0.5;
-                let noise_here = noise.get([xf64 / position_scale, zf64 / position_scale]);
-                let noise_px = noise.get([(xf64+1.0) / position_scale, (zf64) / position_scale]);
-                let noise_pz = noise.get([(xf64) / position_scale, (zf64+1.0) / position_scale]);
-                noise_gradient += vec2(noise_here-noise_px, noise_here-noise_pz)/position_scale;
-                height += noise_here * height_scale * 1.0/(1.0+noise_gradient.magnitude());
-            }
-            return height;
-        }
+        // println!("max: {max_cave}, min: {min_cave}");
         let mut features_placed = 0;
         fn place_feature(
             feature: impl Feature, attempts: usize, chance: f32, features_placed: &mut i32,
-            seed: u32, req: &GenerateChunkBlocksRequest,
-            noise_map: &Vec<f64>, noises: &Vec<Perlin>, blocks: &mut Vec<u16>,
+            resources: &mut ChunkBlockGeneratorResources, req: &GenerateChunkBlocksRequest,
+            blocks: &mut Vec<u16>,
         ) {
             let chunk_sizei32 = CHUNK_SIZE as i32;
-            let chunk_size1 = CHUNK_SIZE as usize + 1;
-            for cx in -1..2 {
-                for cy in -1..2 {
-                    for cz in -1..2 {
+            let feature_type = feature.feature_type();
+            let chunk_range = match feature_type {
+                FeatureType::Surface => [-1..2, 0..1, -1..2],
+                FeatureType::Carver => [-5..5, -5..5, -5..5],
+                FeatureType::Ore => [-1..2, 0..1, -1..2],
+            };
+            for cx in chunk_range[0].clone() {
+                for cy in chunk_range[1].clone() {
+                    for cz in chunk_range[2].clone() {
                         let mut hasher = DefaultHasher::new();
-                        seed.hash(&mut hasher);
+                        resources.seed.hash(&mut hasher);
                         features_placed.hash(&mut hasher);
-                        [req.chunk_position[0]+cx, req.chunk_position[1]+cy, req.chunk_position[2]+cz].hash(&mut hasher);
+                        let target_chunk_position = match feature_type {
+                            FeatureType::Surface => [req.chunk_position[0]+cx, cy, req.chunk_position[2]+cz],
+                            FeatureType::Carver | FeatureType::Ore => [req.chunk_position[0]+cx, req.chunk_position[1]+cy, req.chunk_position[2]+cz],
+                        };
+                        target_chunk_position.hash(&mut hasher);
                         let feature_seed = hasher.finish();
                         let mut rand = SmallRng::seed_from_u64(feature_seed);
                         for _ in 0..attempts {
@@ -464,30 +468,45 @@ impl ChunkManager {
                             }
                             let x = rand.random_range(0..chunk_sizei32)+cx*chunk_sizei32;
                             let z = rand.random_range(0..chunk_sizei32)+cz*chunk_sizei32;
-                            let height = if x >= 0 && x < chunk_sizei32 && z >= 0 && z < chunk_sizei32 {
-                                noise_map[x as usize * chunk_size1 * (noises.len()+1) + z as usize * (noises.len()+1) + noises.len()]
-                            } else {
-                                height_at(x+req.chunk_position[0]*chunk_sizei32, z+req.chunk_position[2]*chunk_sizei32, seed)
-                            };
-                            if height < 0.0 {
-                                continue;
-                            }
-                            if height as i32 + 1 >= (req.chunk_position[1]+cy)*chunk_sizei32 && height as i32 + 1 < (req.chunk_position[1]+cy+1)*chunk_sizei32 {
-                                let y = height as i32 + 1 - (req.chunk_position[1])*chunk_sizei32;
-                                feature.place(x, y, z, &mut rand.fork(), |x: i32, y: i32, z: i32, block_id| {
-                                    if x >= 0 && x < chunk_sizei32 && y >= 0 && y < chunk_sizei32 && z >= 0 && z < chunk_sizei32 {
-                                        blocks[index_in_chunk(x as u32, y as u32, z as u32)] = block_id;
+                            let y = match feature_type {
+                                FeatureType::Surface => {
+                                    let in_this_chunk = x >= 0 && x < chunk_sizei32 && z >= 0 && z < chunk_sizei32;
+                                    let height = resources.height_at(x+req.chunk_position[0]*chunk_sizei32, z+req.chunk_position[2]*chunk_sizei32, in_this_chunk).height;
+                                    if height < 0.0 {
+                                        continue;
                                     }
-                                });
-                            }
+                                    height as i32 + 1 - (req.chunk_position[1])*chunk_sizei32
+                                },
+                                FeatureType::Ore | FeatureType::Carver => {
+                                    let y = rand.random_range(0..chunk_sizei32)+cy*chunk_sizei32;
+                                    let in_this_chunk = x >= 0 && x < chunk_sizei32 && z >= 0 && z < chunk_sizei32;
+                                    let height = resources.height_at(x+req.chunk_position[0]*chunk_sizei32, z+req.chunk_position[2]*chunk_sizei32, in_this_chunk).height;
+                                    if (y+req.chunk_position[1]*chunk_sizei32) as f64 > height {
+                                        continue;
+                                    }
+                                    y
+                                }
+                            };
+                            
+                            feature.place(x, y, z, &mut rand.fork(), |x: i32, y: i32, z: i32, block_id, condition| {
+                                if x >= 0 && x < chunk_sizei32 && y >= 0 && y < chunk_sizei32 && z >= 0 && z < chunk_sizei32 {
+                                    let index = index_in_chunk(x as u32, y as u32, z as u32);
+                                    if condition(blocks[index]) {
+                                        blocks[index] = block_id;
+                                    }
+                                }
+                            });
                         }
                     }
                 }
             }
             features_placed.add_assign(1);
         }
-        place_feature(TreeFeature {}, 9, 0.7, &mut features_placed, seed, &req, &noise_map, &noises, &mut blocks);
-        place_feature(BushFeature {}, 2, 0.9, &mut features_placed, seed, &req, &noise_map, &noises, &mut blocks);
+        place_feature(WormCavesFeature {}, 1, 0.1, &mut features_placed, resources, &req, &mut blocks);
+        place_feature(OreFeature { block: blocks::IRON_ORE, num_blocks: 2..8 }, 100, 0.8, &mut features_placed, resources, &req, &mut blocks);
+        place_feature(OreFeature { block: blocks::COPPER_ORE, num_blocks: 2..8 }, 100, 0.8, &mut features_placed, resources, &req, &mut blocks);
+        place_feature(TreeFeature {}, 9, 0.7, &mut features_placed, resources, &req, &mut blocks);
+        place_feature(BushFeature {}, 2, 0.9, &mut features_placed, resources, &req, &mut blocks);
         GenerateChunkBlocksResponse {
             chunk_position: req.chunk_position,
             chunk_blocks: blocks,
@@ -495,13 +514,13 @@ impl ChunkManager {
     }
 
     fn generate_mesh_req(req: GenerateChunkMeshRequest, device: &Device, registries: &Registries) -> GenerateChunkModelResponse {
-        if req.chunk_blocks == [0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize] {
-            return GenerateChunkModelResponse {
-                chunk_model: None,
-                chunk_position: req.chunk_position,
-            };
-        }
-        let lod = 2i32.pow((Vector3::<i32>::from(req.chunk_position).cast::<f32>().unwrap().mul(CHUNK_SIZE as f32).distance2(Vector3::<f32>::from(req.player_position))/250.0f32.powi(2).floor()) as u32).min(4).max(1);
+        // if req.chunk_blocks == [0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize] {
+        //     return GenerateChunkModelResponse {
+        //         chunk_model: None,
+        //         chunk_position: req.chunk_position,
+        //     };
+        // }
+        let lod = Self::lod_for_distance2(req.chunk_position, req.player_position);
         fn get_block(x: i32, y: i32, z: i32, req: &GenerateChunkMeshRequest, lod: i32) -> BlockID {
             let chunk_sizef32 = CHUNK_SIZE as f32;
             let chunk_sizei32 = CHUNK_SIZE as i32;
@@ -569,22 +588,15 @@ impl ChunkManager {
             }
         }
         #[inline(always)]
-        fn add_modeled_block(block: Block, position: [i32; 3], chunk_position: [i32; 3], modeled_vertices: &mut Vec<Vertex>, modeled_indices: &mut Vec<u32>, model_cache: &mut HashMap<BlockID, BlockModel>) {
-            let model = if let Some(model) = model_cache.get(&block.id) {
-                model
-            } else {
-                let model = parse_model(block);
-                model_cache.insert(block.id, model);
-                model_cache.get(&block.id).unwrap()
-            };
+        fn add_modeled_block(block: Block, model: &dyn BlockModelTrait, position: [i32; 3], chunk_position: [i32; 3], modeled_vertices: &mut Vec<Vertex>, modeled_indices: &mut Vec<u32>, model_cache: &mut HashMap<BlockID, BlockModel>) {
             let chunk_x_f32 = chunk_position[0] as f32 * CHUNK_SIZE as f32;
             let chunk_y_f32 = chunk_position[1] as f32 * CHUNK_SIZE as f32;
             let chunk_z_f32 = chunk_position[2] as f32 * CHUNK_SIZE as f32;
             let atlas_width_proportion = block.atlas_section.width as f32 / BLOCK_ATLAS_PNG_WIDTH as f32;
             let atlas_height_proportion = block.atlas_section.height as f32 / BLOCK_ATLAS_PNG_HEIGHT as f32; 
-            modeled_vertices.extend(model.vertices.iter().map(|it| Vertex { position: [it.position[0]+position[0]as f32+chunk_x_f32, it.position[1]+position[1]as f32+chunk_y_f32, it.position[2]+position[2]as f32+chunk_z_f32, it.position[3]], color: [it.color[0]+block.atlas_section.x as f32 * atlas_width_proportion, it.color[1]+block.atlas_section.y as f32 * atlas_height_proportion, it.color[2], it.color[3]], normal: it.normal }));
+            modeled_vertices.extend(model.vertices().iter().map(|it| Vertex { position: [it.position[0]+position[0]as f32+chunk_x_f32, it.position[1]+position[1]as f32+chunk_y_f32, it.position[2]+position[2]as f32+chunk_z_f32, it.position[3]], color: [it.color[0], it.color[1], it.color[2], it.color[3]], normal: it.normal }));
             let num_indices = modeled_indices.len();
-            modeled_indices.extend(model.indices.iter().map(|it| *it+num_indices as u32));
+            modeled_indices.extend(model.indices().iter().map(|it| *it+num_indices as u32));
         }
         let chunk_sizei32 = CHUNK_SIZE as i32;
         for direction in [-1, 1] {
@@ -602,15 +614,15 @@ impl ChunkManager {
                             pos[u] = x;
                             pos[v] = y;
                             let block_here = get_block_cached(get_block(pos[0], pos[1], pos[2], &req, lod), &mut block_cache, registries);
-                            if block_here.has_model && lod == 1 {
-                                add_modeled_block(block_here, pos, chunk_position, &mut modeled_vertices, &mut modeled_indices, &mut model_cache);
+                            if let Some(model) = block_here.model && lod == 1 {
+                                add_modeled_block(block_here, model, pos, chunk_position, &mut modeled_vertices, &mut modeled_indices, &mut model_cache);
                                 mask_i += 1;
                                 continue;
                             }
 
                             let block_there = get_block_cached(get_block(pos[0]+slice_direction[0], pos[1]+slice_direction[1], pos[2]+slice_direction[2], &req, lod), &mut block_cache, registries);
 
-                            mask[mask_i] = if ((block_here.id != block_there.id) && (block_here.layer < block_there.layer || block_there.has_model)) || !block_here.cull || !block_there.cull {
+                            mask[mask_i] = if ((block_here.id != block_there.id) && (block_here.layer < block_there.layer || block_there.model.is_some())) || !block_here.cull || !block_there.cull {
                                 block_here
                             } else {
                                 air_block
@@ -668,22 +680,22 @@ impl ChunkManager {
                                 vertices_for.extend_from_slice(&[
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + (x+w) as f32, chunk_z_f32 + (y+h) as f32, c[3]], 
-                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, h as f32, w as f32], 
                                         normal: [-1.0, 0.0, 0.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + (x+w) as f32, chunk_z_f32 + y as f32, c[3]], 
-                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x, tex_coords_offset_y, h as f32, w as f32], 
                                         normal: [-1.0, 0.0, 0.0, 0.0],
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + x as f32, chunk_z_f32 + (y+h) as f32, c[3]], 
-                                        color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, h as f32, w as f32], 
                                         normal: [-1.0, 0.0, 0.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + x as f32, chunk_z_f32 + y as f32, c[3]], 
-                                        color: [tex_coords_offset_x, tex_coords_offset_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, h as f32, w as f32], 
                                         normal: [-1.0, 0.0, 0.0, 0.0]
                                     },
                                 ]);
@@ -691,27 +703,26 @@ impl ChunkManager {
                                 vertices_for.extend_from_slice(&[
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + (x+w) as f32, chunk_z_f32 + y as f32, c[3]], 
-                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, h as f32, w as f32], 
                                         normal: [1.0, 0.0, 0.0, 0.0],
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + (x+w) as f32, chunk_z_f32 + (y+h) as f32, c[3]], 
-                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x, tex_coords_offset_y, h as f32, w as f32], 
                                         normal: [1.0, 0.0, 0.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + x as f32, chunk_z_f32 + y as f32, c[3]], 
-                                        color: [tex_coords_offset_x, tex_coords_offset_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, h as f32, w as f32], 
                                         normal: [1.0, 0.0, 0.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + slice as f32+direction_f32, chunk_y_f32 + x as f32, chunk_z_f32 + (y+h) as f32, c[3]], 
-                                        color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, h as f32, w as f32], 
                                         normal: [1.0, 0.0, 0.0, 0.0]
                                     }
                                 ]);
                             }
-                            
                         }
                         if dim == 1 {
                             if direction == -1 {
@@ -767,22 +778,22 @@ impl ChunkManager {
                                 vertices_for.extend_from_slice(&[
                                     Vertex {
                                         position: [chunk_x_f32 + x as f32, chunk_y_f32 + (y+h) as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
-                                        color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, w as f32, h as f32], 
                                         normal: [0.0, 0.0, -1.0, 0.0]
                                     },
                                     Vertex {
                                         position: [chunk_x_f32 + (x+w) as f32, chunk_y_f32 + (y+h) as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
-                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
-                                        normal: [0.0, 0.0, -1.0, 0.0]
-                                    },
-                                    Vertex {
-                                        position: [chunk_x_f32 + x as f32, chunk_y_f32 + y as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
                                         color: [tex_coords_offset_x, tex_coords_offset_y, w as f32, h as f32], 
                                         normal: [0.0, 0.0, -1.0, 0.0]
                                     },
                                     Vertex {
+                                        position: [chunk_x_f32 + x as f32, chunk_y_f32 + y as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
+                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
+                                        normal: [0.0, 0.0, -1.0, 0.0]
+                                    },
+                                    Vertex {
                                         position: [chunk_x_f32 + (x+w) as f32, chunk_y_f32 + y as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
-                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, w as f32, h as f32], 
+                                        color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
                                         normal: [0.0, 0.0, -1.0, 0.0]
                                     },
                                     
@@ -791,24 +802,24 @@ impl ChunkManager {
                                 vertices_for.extend_from_slice(&[
                                     Vertex {
                                         position: [chunk_x_f32 + (x+w) as f32, chunk_y_f32 + (y+h) as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
-                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
-                                        normal: [0.0, 0.0, 1.0, 0.0]
-                                    },
-                                    Vertex {
-                                        position: [chunk_x_f32 + x as f32, chunk_y_f32 + (y+h) as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
-                                        color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
-                                        normal: [0.0, 0.0, 1.0, 0.0]
-                                    },
-                                    Vertex {
-                                        position: [chunk_x_f32 + (x+w) as f32, chunk_y_f32 + y as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
                                         color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y, w as f32, h as f32], 
                                         normal: [0.0, 0.0, 1.0, 0.0]
-                                    },
+                                    },//11
                                     Vertex {
-                                        position: [chunk_x_f32 + x as f32, chunk_y_f32 + y as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
+                                        position: [chunk_x_f32 + x as f32, chunk_y_f32 + (y+h) as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
                                         color: [tex_coords_offset_x, tex_coords_offset_y, w as f32, h as f32], 
                                         normal: [0.0, 0.0, 1.0, 0.0]
-                                    }
+                                    },//01
+                                    Vertex {
+                                        position: [chunk_x_f32 + (x+w) as f32, chunk_y_f32 + y as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
+                                        color: [tex_coords_offset_x+tex_width_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
+                                        normal: [0.0, 0.0, 1.0, 0.0]
+                                    },//10
+                                    Vertex {
+                                        position: [chunk_x_f32 + x as f32, chunk_y_f32 + y as f32, chunk_z_f32 + slice as f32+direction_f32, c[3]], 
+                                        color: [tex_coords_offset_x, tex_coords_offset_y+tex_width_y, w as f32, h as f32], 
+                                        normal: [0.0, 0.0, 1.0, 0.0]
+                                    }//00
                                 ]);
                             }
                         }
@@ -913,6 +924,7 @@ impl ChunkManager {
         GenerateChunkModelResponse {
             chunk_position,
             chunk_model,
+            lod,
         }
     }
 
@@ -924,6 +936,10 @@ impl ChunkManager {
             self.chunks.set(chunk_position, Chunk::new());
             return self.chunks.get_mut(chunk_position).unwrap();
         }
+    }
+
+    pub fn replace_chunk(&mut self, chunk_position: [i32; 3], chunk: Chunk) {
+        self.chunks.set(chunk_position, chunk);
     }
 
     // fn chunk_distance(chunk_position: &[i32; 3], camera_position: [f32; 3]) -> f32 {
@@ -1008,6 +1024,10 @@ impl ChunkManager {
             chunk.set_block([bx, by, bz], block_id, update_synchronously);
         }
     }
+
+    pub fn lod_for_distance2(chunk_position: [i32; 3], player_position: [f32; 3]) -> i32 {
+        2i32.pow((Vector3::<i32>::from(chunk_position).cast::<f32>().unwrap().mul(CHUNK_SIZE as f32).distance2(Vector3::<f32>::from(player_position))/250.0f32.powi(2).floor()) as u32).min(4).max(1)
+    }
 }
 
 struct ChunkMap {
@@ -1031,5 +1051,139 @@ impl ChunkMap {
 
     fn set(&mut self, key: [i32; 3], chunk: Chunk) -> Option<Chunk> {
         self.main.insert(key, chunk)
+    }
+}
+
+pub type NoiseType = Perlin;
+
+struct ChunkBlockGeneratorResources {
+    seed: u32,
+    terrain_noises: Vec<NoiseType>,
+    cave_noise: NoiseType,
+    cached_noise_map: Option<([i32; 2], Vec<f64>)>,
+}
+
+struct HeightAt {
+    height: f64,
+    gradient: Vector2<f64>,
+}
+
+impl ChunkBlockGeneratorResources {
+    fn new(seed: u32) -> Self {
+        let terrain_noises = (0..7).map(|i| NoiseType::new(seed+i)).collect::<Vec<_>>();
+        let cave_noise = NoiseType::new(seed);
+        Self {
+            seed,
+            terrain_noises,
+            cave_noise,
+            cached_noise_map: None,
+        }
+    }
+
+    fn height_at(&mut self, mut x: i32, mut z: i32, cache: bool) -> HeightAt {
+        let mut temp_noise_map;
+        let map_width;
+        let map_height;
+        let gen_width;
+        let gen_height;
+        let noise_map;
+        let chunk_pos: Vector3<i32> = chunk_for_block_position([x, 0, z]).into();
+        let base_xf64 = x as f64;
+        let base_zf64 = z as f64;
+        if cache {
+            let chunk_size1 = CHUNK_SIZE as usize + 1;
+            if self.cached_noise_map.as_ref().is_none_or(|it| it.0 != [chunk_pos.x, chunk_pos.z]) {
+                let noise_map = vec![0.0; (chunk_size1*chunk_size1)*(self.terrain_noises.len()+1)];
+                self.cached_noise_map = Some(([chunk_pos.x, chunk_pos.z], noise_map));
+                gen_width = chunk_size1;
+                gen_height = chunk_size1;
+            } else {
+                gen_width = 0;
+                gen_height = 0;
+            }
+            map_width = chunk_size1;
+            map_height = chunk_size1;
+            noise_map = &mut self.cached_noise_map.as_mut().unwrap().1;
+            x = x - chunk_pos.x*CHUNK_SIZE as i32;
+            z = z - chunk_pos.z*CHUNK_SIZE as i32;
+        } else {
+            temp_noise_map = vec![0.0; (2*2)*(self.terrain_noises.len()+1)];
+            map_width = 2;
+            map_height = 2;
+            gen_width = 2;
+            gen_height = 2;
+            noise_map = &mut temp_noise_map;
+            x = 0;
+            z = 0;
+        }
+
+        for x in 0..gen_width {
+            for z in 0..gen_height {
+                let mut position_scale = 1000.0;
+                let mut height_scale = 100.0;
+                let mut height = 0.0;
+                let xf64 = base_xf64 + x as f64;
+                let zf64 = base_zf64 + z as f64;
+                let mut noise_gradient = vec2(0.0, 0.0);
+                for (noise_i, noise) in self.terrain_noises.iter().enumerate() {
+                    position_scale *= 0.5;
+                    height_scale *= 0.5;
+                    let noise_here = if x == 0 && z == 0 {
+                        let noise = noise.get([xf64 / position_scale, zf64 / position_scale]);
+                        noise_map[noise_i] = noise;
+                        noise
+                    } else {
+                        noise_map[x as usize * map_height * (self.terrain_noises.len()+1) + z as usize * (self.terrain_noises.len()+1) + noise_i]
+                    };
+                    let noise_px = noise.get([(xf64+1.0) / position_scale, (zf64) / position_scale]);
+                    if x+1 < map_width {
+                        noise_map[(x+1) as usize * map_height * (self.terrain_noises.len()+1) + z as usize * (self.terrain_noises.len()+1) + noise_i] = noise_px;
+                    }
+                    let noise_pz = noise.get([(xf64) / position_scale, (zf64+1.0) / position_scale]);
+                    if z+1 < map_height {
+                        noise_map[x as usize * map_height * (self.terrain_noises.len()+1) + (z+1) as usize * (self.terrain_noises.len()+1) + noise_i] = noise_pz;
+                    }
+                    noise_gradient += vec2(noise_here-noise_px, noise_here-noise_pz)/position_scale;
+                    height += noise_here * height_scale * 1.0/(1.0+noise_gradient.magnitude());
+                }
+                noise_map[x as usize * map_height * (self.terrain_noises.len()+1) + z as usize * (self.terrain_noises.len()+1) + self.terrain_noises.len()] = height;
+            }
+        }
+        let height = noise_map[x as usize * map_height * (self.terrain_noises.len()+1) + z as usize * (self.terrain_noises.len()+1) + self.terrain_noises.len()];
+        let height_px = noise_map[(x as usize+1) * map_height * (self.terrain_noises.len()+1) + z as usize * (self.terrain_noises.len()+1) + self.terrain_noises.len()];
+        let height_pz = noise_map[x as usize * map_height * (self.terrain_noises.len()+1) + (z as usize+1) * (self.terrain_noises.len()+1) + self.terrain_noises.len()];
+        let gradient = vec2(height_px-height, height_pz-height);
+        return HeightAt { height, gradient }
+    }
+}
+
+#[cfg(test)]
+mod worldgen_test {
+    use std::{fs::write, io::Cursor, path::Path};
+
+use image::{ImageBuffer, ImageFormat, Luma};
+
+use crate::chunk::{CHUNK_SIZE, ChunkManager};
+
+    #[test]
+    fn test_worldgen() {
+        let mut image = ImageBuffer::<Luma<u16>, Vec<u16>>::new(CHUNK_SIZE*100, CHUNK_SIZE*100);
+        let mut resources = super::ChunkBlockGeneratorResources::new(rand::random());
+        for cx in 0..100 {
+            for cz in 0..100 {
+                println!("{}/10,000", cx*100+cz);
+                ChunkManager::generate_blocks_req(super::GenerateChunkBlocksRequest { chunk_position: [cx as i32, 0, cz as i32], player_position: [(cx * CHUNK_SIZE) as f32, 0.0, (cz * CHUNK_SIZE) as f32] }, &mut resources, Some(|heights: Vec<f64>| {
+                    for x in 0..CHUNK_SIZE {
+                        for z in 0..CHUNK_SIZE {
+                            let height = heights[(x * CHUNK_SIZE + z) as usize];
+                            image.put_pixel(x+cx*CHUNK_SIZE, z+cz*CHUNK_SIZE, Luma([(u16::MAX as f64 * ((height+500.0)/1000.0)) as u16]));
+                        }
+                    }
+                }));
+            }
+        }
+        let mut output = vec![];
+        image.write_to(&mut Cursor::new(&mut output), ImageFormat::Png).unwrap();
+        write(&Path::new("worldgen_heights.png"), output).unwrap();
     }
 }

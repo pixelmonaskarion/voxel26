@@ -28,7 +28,7 @@ pub struct ParticleManager<'a> {
 
 impl <'a> ParticleManager<'a> {
     pub fn new(surface_ctx: &dyn SurfaceCtx, screen_info_binding: &UniformBinding<ScreenInfo>, deferred_formats: Vec<TextureFormat>) -> Self {
-        let max_particles = 1000;
+        let max_particles = 8000;
         let particles_buffer = surface_ctx.device().create_buffer(&BufferDescriptor {
             label: Some("Particles buffer"),
             mapped_at_creation: false,
@@ -136,8 +136,8 @@ impl <'a> ParticleManager<'a> {
             &self.particles2_bind_group
         };
         self.delta_seconds_uniform.set_data(surface_ctx.queue(), delta_time.as_secs_f32());
-        self.update_shader.run_once(vec![in_buffer, out_buffer, &self.delta_seconds_uniform.binding], [10; 3], surface_ctx.device(), surface_ctx.queue());
-        self.instance_shader.run_once(vec![&out_buffer, &self.instances_bind_group, &self.num_instances_output.binding], [10; 3], surface_ctx.device(), surface_ctx.queue());
+        self.update_shader.run_once(vec![in_buffer, out_buffer, &self.delta_seconds_uniform.binding], [20; 3], surface_ctx.device(), surface_ctx.queue());
+        self.instance_shader.run_once(vec![&out_buffer, &self.instances_bind_group, &self.num_instances_output.binding], [20; 3], surface_ctx.device(), surface_ctx.queue());
         self.num_instances = *bytemuck::from_bytes::<u32>(&self.num_instances_output.read(surface_ctx.device(), surface_ctx.queue()));
         surface_ctx.queue().write_buffer(&self.num_instances_output.buffer, 0, &vec![0; self.num_instances_output.buffer.size() as usize]);
         self.flip = !self.flip;

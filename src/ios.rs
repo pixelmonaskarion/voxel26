@@ -1,4 +1,5 @@
 #![no_main]
+use futures::executor::block_on;
 use tokio::runtime::Runtime;
 use winit::event_loop::EventLoop;
 
@@ -20,26 +21,29 @@ mod ssao;
 mod items;
 mod registries;
 mod crafting;
+mod game_serializer;
+mod tags;
+mod const_block_models;
+
 include!(concat!(env!("OUT_DIR"), "/resources.rs"));
 
 #[unsafe(no_mangle)]
 // #[cfg(target_os = "ios")] 
 pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
-    println!("starting");
-    let rt = Runtime::new().unwrap();
-    rt.block_on(async {
-        println!("blocking");
-        actual_main().await;
-        println!("finished main");
-    });
-    
+    actual_main();
     return 1;
 }
 
 #[unsafe(no_mangle)]
 // #[cfg(target_os = "ios")] 
-async fn actual_main() {
-    env_logger::init();
-    let event_loop = EventLoop::new().unwrap();
-    runner::common_main(event_loop).await;
+pub extern "C" fn actual_main() {
+    println!("starting");
+    let rt = Runtime::new().unwrap();
+    println!("blocking");
+    rt.block_on(async {
+        env_logger::init();
+        let event_loop = EventLoop::new().unwrap();
+        runner::common_main(event_loop).await;
+    });
+    println!("finished main");
 }

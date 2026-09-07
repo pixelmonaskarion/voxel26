@@ -1,30 +1,42 @@
 use std::time::Duration;
 
+use bespoke_engine::camera::Camera;
 use cgmath::{InnerSpace, Vector3, vec3};
+use ordered_float::OrderedFloat;
+use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 
-use crate::{chunk::ChunkManager, inventory::Inventory, registries::Registries};
+use crate::{blocks::Block, chunk::ChunkManager, inventory::Inventory, registries::{Registries, TagID}};
 
 pub struct Player {
+    pub camera: Camera,
     pub position: Vector3<f32>,
     pub velocity: Vector3<f32>,
     pub time_since_ground: Duration,
     pub movement_mode: i32,
     pub break_cooldown: Duration,
+    pub break_progress: Duration,
+    pub break_position: Option<Vector3<i32>>,
 
     pub inventory: Inventory,
+    pub attributes: FxHashMap<EntityAttribute, f32>,
     pub health: f32,
 }
 
 impl Player {
-    pub fn new(position: Vector3<f32>, registries: &Registries) -> Self {
+    pub fn new(position: Vector3<f32>, camera: Camera, registries: &Registries) -> Self {
         let mut _self = Self {
+            camera,
             position,
             velocity: vec3(0.0, 0.0, 0.0),
             time_since_ground: Duration::new(2, 0),
             movement_mode: 0,
             break_cooldown: Duration::ZERO,
+            break_progress: Duration::ZERO,
+            break_position: None,
             inventory: Inventory::empty_size(4*9, registries),
             health: 20.0,
+            attributes: FxHashMap::from_iter([(EntityAttribute::BlockBreakSpeed, 1.0)])
         };
         _self
     }
@@ -61,6 +73,23 @@ impl Player {
 
     pub fn damage(&mut self, damage: f32) {
         self.health -= damage;
+    }
+
+    pub fn block_break_modifier(&mut self, target: Block, registries: &Registries) -> f32 {
+        let mut attribute = *self.attributes.get(&EntityAttribute::BlockBreakSpeed).unwrap_or(&1.0);
+        let conditional_modifier = registries.item_registry.get_item(self.inventory.selected_item().stack.item).attribute_modifiers.get(&EntityAttribute::BlockBreakSpeed).cloned().unwrap_or_default();
+        if match conditional_modifier.condition {
+            AttributeModifierCondition::Always => true,
+            AttributeModifierCondition::TargetInTag(tag_id) => registries.tag_registry.get_block_tag(tag_id).entries.contains(&target.id),
+        } {
+            attribute = conditional_modifier.modifier.modify(attribute);
+        }
+        attribute
+    }
+    
+    pub fn add_break_progress(&mut self, delta: Duration, target: Block, registries: &Registries) {
+        let attribute = self.block_break_modifier(target, registries);
+        self.break_progress += delta.mul_f32(attribute);
     }
 
     pub fn colliding_world(&self, world: &ChunkManager, registries: &Registries) -> bool {
@@ -173,6 +202,44 @@ impl Player {
         }
 
         None
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy, Debug)]
+pub enum EntityAttribute {
+    BlockBreakSpeed,
+}
+
+#[derive(PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy, Debug)]
+pub enum AttributeModifier {
+    Multiply(OrderedFloat<f32>),
+    Add(OrderedFloat<f32>),
+}
+
+impl Default for AttributeModifier {
+    fn default() -> Self {
+        Self::Add(0.0.into())
+    }
+}
+
+impl AttributeModifier {
+    pub fn modify(&self, value: f32) -> f32 {
+        match self {
+            AttributeModifier::Add(m) => value + **m,
+            AttributeModifier::Multiply(m) => value * **m
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+pub enum AttributeModifierCondition {
+    Always,
+    TargetInTag(TagID),
+}
+
+impl Default for AttributeModifierCondition {
+    fn default() -> Self {
+        Self::Always
     }
 }
 

@@ -30,8 +30,9 @@ impl Entity {
 
     pub fn update(&mut self, world: &ChunkManager, delta_time: Duration, registries: &Registries) {
         self.time_alive += delta_time;
-        self.velocity.x *= 0.9;
-        self.velocity.z *= 0.9;
+        let friction_coefficient = 0.00001f64;
+        self.velocity.x *= friction_coefficient.powf(delta_time.as_secs_f64()) as f32;
+        self.velocity.z *= friction_coefficient.powf(delta_time.as_secs_f64()) as f32;
         self.velocity -= vec3(0.0, 20.0 * delta_time.as_secs_f32(), 0.0);
         let delta = self.velocity * delta_time.as_secs_f32();
         let x_steps = (delta.x.abs()/0.5).ceil();
@@ -67,7 +68,7 @@ impl Entity {
     pub fn shader_instance(&self, item_atlas: &ItemAtlasRegistry) -> Option<Vec<u8>> {
         match &self.entity_type {
             TypedEntity::Item { stack } => {
-                let atlas_subsection = item_atlas.subsection_for_position(stack.atlas_coordinates);
+                let atlas_subsection = item_atlas.fractional_atlas_section(&stack.atlas_section);
                 Some(ItemInstance { position: (self.position+vec3(0.0, (self.time_alive.as_secs_f32().sin()+1.0)*0.05, 0.0)).extend(1.0).into(), texture_offsets: [0.0; 4], atlas_subsection }.to_raw())
             },
             TypedEntity::Marker => {

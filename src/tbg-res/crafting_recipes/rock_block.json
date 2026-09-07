@@ -1,0 +1,15 @@
+{
+    "pattern": [
+        "   ",
+        " C ",
+        "   "
+    ],
+    "result": "R",
+    "substitutions": {
+        "C": "cobblestone_block",
+        "R": {
+            "id": "rock_block",
+            "count": 4
+        }
+    }
+}

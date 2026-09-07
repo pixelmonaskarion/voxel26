@@ -1,0 +1,15 @@
+{
+    "pattern": [
+        " P ",
+        " P ",
+        "   "
+    ],
+    "result": "S",
+    "substitutions": {
+        "P": "planks_block",
+        "S": {
+            "id": "stick",
+            "count": 4
+        }
+    }
+}

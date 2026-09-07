@@ -1,0 +1,12 @@
+{
+    "pattern": [
+        "CCC",
+        "C C",
+        "CCC"
+    ],
+    "result": "K",
+    "substitutions": {
+        "C": "cobblestone_block",
+        "K": "kiln_block"
+    }
+}

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_inline_default::serde_inline_default;
 
-use crate::{inventory::ItemStack, registries::{ItemRegistry, Registries}};
+use crate::{inventory::ItemStack, items::ItemID, registries::{ItemRegistry, Registries, TagID, TagRegistry}};
 
 #[derive(Serialize, Deserialize)]
 pub struct CraftingRecipeJson {
@@ -15,37 +16,100 @@ pub struct CraftingRecipeJson {
 #[serde(untagged)]
 pub enum CraftingRecipeJsonSubstitution {
     ItemID(String),
-    ItemStack(ItemStackJson)
+    CraftingItemStack(CraftingItemStackJson),
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize)]
+pub struct ItemStackData {
+    pub id: String,
+    pub count: i32,
+}
+
+#[serde_inline_default]
 #[derive(Serialize, Deserialize)]
-pub struct ItemStackJson {
-    id: String,
-    count: i32,
+pub struct CraftingItemStackJson {
+    pub id: String,
+    #[serde_inline_default(1)]
+    pub count: i32,
+    #[serde_inline_default(false)]
+    pub tool: bool,
+}
+
+#[derive(Clone, Debug)]
+#[allow(unused)]
+pub enum CraftingIngredient {
+    ItemStack(ItemStack),
+    TagStack { tag: TagID, count: i32 },
+}
+
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub enum CraftingIngredientID {
+    ItemID(ItemID),
+    TagID(TagID),
+}
+
+impl CraftingIngredient {
+    pub fn id(&self) -> CraftingIngredientID {
+        match self {
+            CraftingIngredient::ItemStack(stack) => CraftingIngredientID::ItemID(stack.item),
+            CraftingIngredient::TagStack { tag, .. } => CraftingIngredientID::TagID(tag),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CraftingItemStack {
+    pub ingredient: CraftingIngredient,
+    pub tool: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct CraftingRecipe {
-    pub pattern: Vec<Vec<ItemStack>>,
+    pub pattern: Vec<Vec<CraftingItemStack>>,
     pub result: ItemStack,
 }
 
 impl CraftingRecipe {
-    pub fn from_json(mut json: CraftingRecipeJson, item_registry: &ItemRegistry) -> Self {
+    pub fn from_json(mut json: CraftingRecipeJson, item_registry: &ItemRegistry, tag_registry: &TagRegistry) -> Self {
         json.substitutions.insert(" ".into(), CraftingRecipeJsonSubstitution::ItemID("nothing".into()));
-        let pattern = json.pattern.into_iter().map(|row| row.chars().into_iter().map(|char| {
-            match json.substitutions.get(&char.to_string()).expect(&format!("no substition for {char} in recipe")) {
-                CraftingRecipeJsonSubstitution::ItemID(id) => ItemStack::new(item_registry.get_item(id).id, 1),
-                CraftingRecipeJsonSubstitution::ItemStack(stack_json) => ItemStack { item: item_registry.get_item(&stack_json.id).id, count: stack_json.count }
+        let get_ingredient = |id: &str, count: i32| {
+            if id.starts_with("#") {
+                CraftingIngredient::TagStack { tag: tag_registry.get_item_tag(&id[1..]).id, count }
+            } else {
+                CraftingIngredient::ItemStack(ItemStack::new(item_registry.get_item(id).id, count))
             }
+        };
+        let get_substitution = |char| {
+            match json.substitutions.get(&char).expect(&format!("no substition for {char} in recipe")) {
+                CraftingRecipeJsonSubstitution::ItemID(id) => CraftingItemStack { ingredient: get_ingredient(id, 1), tool: false },
+                CraftingRecipeJsonSubstitution::CraftingItemStack(stack) => CraftingItemStack { ingredient: get_ingredient(&stack.id, stack.count), tool: stack.tool },
+            }
+        };
+        let pattern = json.pattern.into_iter().map(|row| row.chars().into_iter().map(|char| {
+            get_substitution(char.to_string())
         }).collect()).collect();
-        let result = match json.substitutions.get(&json.result).expect(&format!("no substition for {} in recipe", json.result)) {
-            CraftingRecipeJsonSubstitution::ItemID(id) => ItemStack::new(item_registry.get_item(id).id, 1),
-            CraftingRecipeJsonSubstitution::ItemStack(stack_json) => ItemStack { item: item_registry.get_item(&stack_json.id).id, count: stack_json.count }
+        let CraftingIngredient::ItemStack(result) = get_substitution(json.result.clone()).ingredient else {
+            panic!("crafting result must be an ItemStack, not {}", json.result);
         };
         Self {
             pattern,
             result,
         }
+    }
+
+    pub fn matches(&self, pattern: &Vec<Vec<ItemStack>>, registries: &Registries) -> bool {
+        for x in 0..3 {
+            for y in 0..3 {
+                let self_ingredient = &self.pattern[x][y].ingredient;
+                let stack = &pattern[x][y];
+                if !match self_ingredient {
+                    CraftingIngredient::ItemStack(self_stack) => self_stack.item == stack.item,
+                    CraftingIngredient::TagStack { tag, .. } => registries.tag_registry.get_item_tag(*tag).entries.contains(stack.item),
+                } {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 }

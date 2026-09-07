@@ -1,0 +1,13 @@
+{
+    "pattern": [
+        "PPP",
+        " S ",
+        " S "
+    ],
+    "result": "X",
+    "substitutions": {
+        "S": "stick",
+        "P": "planks_block",
+        "X": "wooden_pickaxe"
+    }
+}
