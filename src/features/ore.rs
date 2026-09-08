@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use cgmath::vec3;
+use glam::ivec3;
 use rand::{Rng, RngExt};
 use rustc_hash::FxHashSet;
 
@@ -16,13 +16,13 @@ impl Feature for OreFeature {
         let mut num_blocks = rand.random_range(self.num_blocks.clone());
         let mut already_placed = FxHashSet::default();
         while num_blocks > 0 {
-            let direction = [vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, -1, 0), vec3(0, 1, 0), vec3(0, 0, -1), vec3(0, 0, -1)][rand.random_range(0..6)];
+            let direction = [ivec3(1, 0, 0), ivec3(-1, 0, 0), ivec3(0, -1, 0), ivec3(0, 1, 0), ivec3(0, 0, -1), ivec3(0, 0, -1)][rand.random_range(0..6)];
             x += direction.x;
             y += direction.y;
             z += direction.z;
-            if !already_placed.contains(&vec3(x, y, z)) {
+            if !already_placed.contains(&ivec3(x, y, z)) {
                 set_block(x, y, z, self.block, |block| block == blocks::STONE );
-                already_placed.insert(vec3(x, y, z));
+                already_placed.insert(ivec3(x, y, z));
                 num_blocks -= 1;
             }
         }

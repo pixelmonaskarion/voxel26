@@ -8,7 +8,6 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 bytemuck = { version = "1.25.2", features=["derive"] }
-cgmath = { version = "0.18.0", features = ["serde"] }
 env_logger = "0.11.11"
 image = "0.25.10"
 tokio = { version = "1.53.1", features = ["full"] }
@@ -32,11 +31,12 @@ thiserror = "2.0.20"
 serde-inline-default = "1.0.2"
 flate2 = "1.1.10"
 rkyv = "0.8.18"
+glam = { version = "0.33.7", features = ["serde", "rkyv", "bytecheck"] }
 
 [build-dependencies]
 bespoke-engine = { path = "../bespoke-engine" }
 image = "0.25.10"
-cgmath = { version = "0.18.0", features = ["serde"] }
+glam = { version = "0.33.7", features = ["serde", "rkyv"] }
 wgpu = "30.0.0"
 bytemuck = { version = "1.25.2", features=["derive"] }
 serde_json = "1.0.151"

@@ -2,19 +2,21 @@ use std::time::Duration;
 
 use bespoke_engine::{binding::{Binding, Descriptor, create_layout}, culling::AABB, model::{Model, ToRaw}, shader::{Shader, ShaderInit}, surface_context::SurfaceCtx, texture::{Texture, TextureLayoutConfig}, window::BasicVertex};
 use bytemuck::bytes_of;
-use cgmath::{Vector3, vec3};
+use glam::{Vec3, vec3};
 use wgpu::{Buffer, BufferUsages, TextureFormat, wgt::BufferDescriptor};
 
 use crate::{RES_SHADERS_ITEM_ENTITY_WGSL, chunk::ChunkManager, game::ScreenInfo, inventory::InventoryItemStack, registries::{ItemAtlasRegistry, Registries}, util};
 
+#[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct Entity {
-    pub position: Vector3<f32>,
-    pub velocity: Vector3<f32>,
+    pub position: Vec3,
+    pub velocity: Vec3,
     pub time_alive: Duration,
     pub entity_type: TypedEntity,
 }
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub enum EntityType {
     Item,
     Marker,
@@ -36,7 +38,7 @@ impl Entity {
         self.velocity -= vec3(0.0, 20.0 * delta_time.as_secs_f32(), 0.0);
         let delta = self.velocity * delta_time.as_secs_f32();
         let x_steps = (delta.x.abs()/0.5).ceil();
-        let colliding = |position: Vector3<f32>| -> bool {
+        let colliding = |position: Vec3| -> bool {
             util::colliding_world(world, position, vec3(0.15, 0.15, 0.15), vec3(-0.15, -0.15, -0.15), registries)
         };
         for _ in 0..x_steps as i32 {
@@ -78,6 +80,7 @@ impl Entity {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub enum TypedEntity {
     Item {
         stack: InventoryItemStack,

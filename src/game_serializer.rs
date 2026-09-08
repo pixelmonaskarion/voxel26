@@ -1,16 +1,15 @@
-use std::{fs::{self, create_dir_all, read, write}, io::{self, Write}, num::ParseIntError, path::PathBuf, time::Duration};
+use std::{collections::HashMap, fs::{self, create_dir_all, read, write}, io::{self, Write}, num::ParseIntError, path::PathBuf, time::Duration};
 
 use bespoke_engine::{camera::Camera, resource_compiler::dir_contents};
-use cgmath::Vector3;
 use directories::ProjectDirs;
 use flate2::Compression;
+use glam::{IVec3, Vec3};
 use itertools::Itertools;
-use rkyv::Archive;
+use rkyv::rancor;
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{crafting::ItemStackData, game::Game, inventory::{Inventory, InventoryItemStack, ItemStack}, player::{EntityAttribute, Player}, registries::Registries};
+use crate::{chunk::{ArchivedChunkData, Chunk, ChunkData}, crafting::ItemStackData, game::Game, inventory::{Inventory, InventoryItemStack, ItemStack}, player::{EntityAttribute, Player}, registries::Registries};
 
 pub struct GameSerializer {
     project_dirs: ProjectDirs,
@@ -29,9 +28,9 @@ impl GameSerializer {
 
     pub fn get_world_info(&mut self) {
         let data_dir = self.project_dirs.data_dir().to_path_buf();
-        let world_info_file = data_dir.join("world_info.rmp");
+        let world_info_file = data_dir.join("world_info.rkyv");
         if world_info_file.exists() {
-            if let Ok(Ok(world_info)) = read(world_info_file).map(|file| rkyv::access(&Self::ungzip(&file))) {
+            if let Ok(Ok(Ok(world_info))) = read(world_info_file).map(|file| rkyv::access::<ArchivedWorldInfo, rancor::Error>(&Self::ungzip(&file)).map(|archive| rkyv::deserialize::<WorldInfo, rancor::Error>(archive))) {
                 self.world_info = Some(world_info);
             }
         }
@@ -45,26 +44,26 @@ impl GameSerializer {
         create_dir_all(&world_dir).unwrap();
         //chunks
         for (pos, chunk) in game.chunk_manager.chunks() {
-            if !chunk.generated_blocks {
+            if !chunk.data.generated_blocks {
                 continue;
             }
-            let chunk_file = world_dir.join(format!("x{}y{}z{}.rmp", pos[0], pos[1], pos[2]));
-            write(chunk_file, Self::gzip(&rkyv::to_bytes(chunk).unwrap())).unwrap();
+            let chunk_file = world_dir.join(format!("x{}y{}z{}.rkyv", pos[0], pos[1], pos[2]));
+            write(chunk_file, Self::gzip(&rkyv::to_bytes::<rancor::Error>(&chunk.data).unwrap())).unwrap();
         }
         //player
-        let player_file = data_dir.join("player.rmp");
-        write(player_file, Self::gzip(&rkyv::to_bytes(&PlayerData::from_real(&game.player)).unwrap())).unwrap();
+        let player_file = data_dir.join("player.rkyv");
+        write(player_file, Self::gzip(&rkyv::to_bytes::<rancor::Error>(&PlayerData::from_real(&game.player)).unwrap())).unwrap();
         //world_info
-        let player_file = data_dir.join("world_info.rmp");
-        write(player_file, Self::gzip(&rkyv::to_bytes(&game.world_info).unwrap())).unwrap();
+        let player_file = data_dir.join("world_info.rkyv");
+        write(player_file, Self::gzip(&rkyv::to_bytes::<rancor::Error>(&game.world_info).unwrap())).unwrap();
     }
 
     pub fn load_world(&mut self, game: &mut Game) {
         let data_dir = self.project_dirs.data_dir().to_path_buf();
         let world_dir = data_dir.join("world");
-        let player_file = data_dir.join("player.rmp");
+        let player_file = data_dir.join("player.rkyv");
         if world_dir.exists() && player_file.exists() {
-            let player_json: PlayerData = rkyv::access(&Self::ungzip(&fs::read(player_file).unwrap())).unwrap();
+            let player_json: PlayerData =  rkyv::deserialize::<PlayerData, rancor::Error>(rkyv::access::<ArchivedPlayerData, rancor::Error>(&Self::ungzip(&fs::read(player_file).unwrap())).unwrap()).unwrap();
             game.player = player_json.to_real(&game.registries);
             for chunk_file in dir_contents(world_dir) {
                 if let Err(e) = self.load_chunk(game, chunk_file) {
@@ -84,8 +83,15 @@ impl GameSerializer {
         let z = name[z_index+1..].parse()?;
         let pos = [x, y, z];
         let chunk_bytes = Self::ungzip(&read(chunk_file).unwrap());
-        let chunk = rkyv::access(&chunk_bytes).unwrap();
-        game.chunk_manager.replace_chunk(pos, chunk);
+        let chunk_data = rkyv::deserialize::<ChunkData, rancor::Error>(rkyv::access::<ArchivedChunkData, rancor::Error>(&chunk_bytes).unwrap()).unwrap();
+        game.chunk_manager.replace_chunk(pos, Chunk {
+            creating_model: false,
+            data: chunk_data,
+            entities: HashMap::default(),
+            lod: 0,
+            model: None,
+            needed_chunk_updates: vec![],
+        });
         Ok(())
     }
 
@@ -102,7 +108,7 @@ impl GameSerializer {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct WorldInfo {
     pub seed: u32,
 }
@@ -117,13 +123,13 @@ pub enum ChunkLoadError {
     InvalidFileName(String),
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct PlayerData {
     pub camera: Camera,
-    pub position: Vector3<f32>,
-    pub velocity: Vector3<f32>,
+    pub position: Vec3,
+    pub velocity: Vec3,
     pub break_progress: Duration,
-    pub break_position: Option<Vector3<i32>>,
+    pub break_position: Option<IVec3>,
     pub time_since_ground: Duration,
     pub movement_mode: i32,
     pub break_cooldown: Duration,
@@ -173,7 +179,7 @@ impl PlayerData {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct InventoryData {
     pub items: Vec<ItemStackData>,
     pub selected: usize,

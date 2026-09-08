@@ -1,4 +1,4 @@
-use cgmath::Vector3;
+use glam::Vec3;
 
 use crate::{chunk::{CHUNK_SIZE, ChunkManager}, registries::Registries};
 
@@ -95,7 +95,7 @@ pub fn chunk_for_world_position(world_position: [f32; 3]) -> [i32; 3] {
     return [cx, cy, cz];
 }
 
-pub fn colliding_world(world: &ChunkManager, center: Vector3<f32>, positive_size: Vector3<f32>, negative_size: Vector3<f32>, registries: &Registries) -> bool {
+pub fn colliding_world(world: &ChunkManager, center: Vec3, positive_size: Vec3, negative_size: Vec3, registries: &Registries) -> bool {
     let min_world = center + negative_size;
     let max_world = center + positive_size;
 

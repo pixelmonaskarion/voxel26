@@ -1,28 +1,28 @@
 use bespoke_engine::{binding::Descriptor, model::ToRaw, InstanceTrait};
 use bytemuck::bytes_of;
-use cgmath::{Deg, Quaternion, Rotation3, Vector3};
+use glam::{Mat4, Quat, Vec3, vec3};
 
 #[derive(Clone)]
 pub struct Instance {
-    pub position: cgmath::Vector3<f32>,
-    pub rotation: cgmath::Quaternion<f32>,
+    pub position: Vec3,
+    pub rotation: Quat,
 }
 
 impl InstanceTrait for Instance {
-    fn instance_transform(&self) -> cgmath::Matrix4<f32> {
-        cgmath::Matrix4::from_translation(self.position) * cgmath::Matrix4::from(self.rotation)
+    fn instance_transform(&self) -> Mat4 {
+        Mat4::from_translation(self.position) * Mat4::from_quat(self.rotation)
     }
 }
 
 impl Instance {
     pub fn raw(&self) -> InstanceRaw {
-        InstanceRaw {model: self.instance_transform().into() }
+        InstanceRaw {model: self.instance_transform().to_cols_array_2d() }
     }
 }
 
 impl Default for Instance {
     fn default() -> Self {
-        Self { position: Vector3::new(0.0, 0.0, 0.0), rotation: Quaternion::from_axis_angle(Vector3::unit_z(), Deg(0.0)) }
+        Self { position: vec3(0.0, 0.0, 0.0), rotation: Quat::from_axis_angle(Vec3::Z, 0.0) }
     }
 }
 

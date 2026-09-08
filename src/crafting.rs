@@ -19,7 +19,7 @@ pub enum CraftingRecipeJsonSubstitution {
     CraftingItemStack(CraftingItemStackJson),
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct ItemStackData {
     pub id: String,
     pub count: i32,

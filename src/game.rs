@@ -1,8 +1,8 @@
 use std::{collections::HashMap, f32::consts::PI, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::AABB, model::{Model, Render}, resource_loader::{ResourceConst, load_resource, load_resource_string}, shader::{PostProcessShaderInit, Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture, TextureLayoutConfig}, window::{BasicVertex, MULTISAMPLE_COUNT, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
+use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::{AABB, vec3_mul_elements}, model::{Model, Render}, resource_loader::{ResourceConst, load_resource, load_resource_string}, shader::{PostProcessShaderInit, Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture, TextureLayoutConfig}, window::{BasicVertex, MULTISAMPLE_COUNT, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
 use bytemuck::{NoUninit, Pod, Zeroable, bytes_of};
-use cgmath::{ElementWise, InnerSpace, MetricSpace, Vector2, Vector3, Zero, vec2, vec3};
+use glam::{IVec3, UVec2, Vec2, Vec3, ivec3, vec2, vec3};
 use rustc_hash::FxHashMap;
 use wgpu::{Color, CommandEncoder, Features, Limits, RenderPass, TextureFormat, wgt::CommandEncoderDescriptor};
 use wgpu_text::{BrushBuilder, TextBrush, glyph_brush::{HorizontalAlign, Layout, OwnedSection, OwnedText, VerticalAlign, ab_glyph::FontVec}};
@@ -35,7 +35,7 @@ pub struct Game<'a> {
     pub screen_info_binding: UniformBinding<ScreenInfo>,
 
     pub screen_size: [f32; 2],
-    pub mouse_coords: Vector2<f32>,
+    pub mouse_coords: Vec2,
     pub start_time: u128,
 
     pub keys_down: Vec<KeyCode>,
@@ -98,7 +98,7 @@ impl <'a> Game<'a> {
 
         let screen_size = [surface_ctx.size().0 as f32, surface_ctx.size().1 as f32];
         let camera = Camera {
-            eye: Vector3::new(-1.0, 0.0, 0.0),
+            eye: vec3(-1.0, 0.0, 0.0),
             aspect: screen_size[0] / screen_size[1],
             fovy: 70.0,
             znear: 0.1,
@@ -218,13 +218,13 @@ impl <'a> Game<'a> {
 
         game_serializer.load_world(&mut _self);
 
-        if !_self.chunk_manager.get_chunk_or_create([0, -1, 0]).generated_blocks {
+        if !_self.chunk_manager.get_chunk_or_create([0, -1, 0]).data.generated_blocks {
             _self.chunk_manager.generate_blocks([0, -1, 0], [0.0; 3]);
         }
-        if !_self.chunk_manager.get_chunk_or_create([0; 3]).generated_blocks {
+        if !_self.chunk_manager.get_chunk_or_create([0; 3]).data.generated_blocks {
             _self.chunk_manager.generate_blocks([0; 3], [0.0; 3]);
         }
-        if !_self.chunk_manager.get_chunk_or_create([0, 1, 0]).generated_blocks {
+        if !_self.chunk_manager.get_chunk_or_create([0, 1, 0]).data.generated_blocks {
             _self.chunk_manager.generate_blocks([0, 1, 0], [0.0; 3]);
         }
 
@@ -233,7 +233,7 @@ impl <'a> Game<'a> {
 }
 
 impl <'s> WindowHandler for Game<'s> {
-    fn resize(&mut self, surface_ctx: &dyn SurfaceCtx, new_size: Vector2<u32>) {
+    fn resize(&mut self, surface_ctx: &dyn SurfaceCtx, new_size: UVec2) {
         let aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
         self.player.camera.aspect = aspect_ratio;
         self.screen_size = [new_size.x as f32, new_size.y as f32];
@@ -474,20 +474,20 @@ impl <'s> Game<'s> {
         }
         if self.keys_down.contains(&KeyCode::Space) {
             if self.player.time_since_ground < Duration::from_secs_f32(0.1) {
-                self.player.velocity += Vector3::unit_y() * 8.94427191;
+                self.player.velocity += Vec3::Y * 8.94427191;
                 self.player.velocity += self.player.camera.get_walking_vec() * 80.0 * delta.as_secs_f32();
                 self.player.time_since_ground = Duration::from_secs_f32(1.0);
             }
         }
         if self.player.movement_mode == 1 {
             if self.keys_down.contains(&KeyCode::ShiftLeft) {
-                self.player.velocity -= Vector3::unit_y() * speed;
+                self.player.velocity -= Vec3::Y * speed;
             }
             if self.keys_down.contains(&KeyCode::Space) {
-                self.player.velocity += Vector3::unit_y() * speed;
+                self.player.velocity += Vec3::Y * speed;
             }
         }
-        if !movement.is_zero() {
+        if movement.length_squared() > 0.0 {
             self.player.velocity += movement.normalize() * speed;
         }
         if self.keys_down.contains(&KeyCode::KeyC) {
@@ -501,7 +501,7 @@ impl <'s> Game<'s> {
                 if self.player.break_cooldown.is_zero() || self.new_mouse_down.contains(&MouseButton::Right) {
                     if let Some((coordinate, face)) = self.player.raycast(self.player.camera.get_forward_vec(), 6.0, &self.chunk_manager, &self.registries) {
                         if let ItemProperties::BlockItem(block_item) = self.registries.item_registry.get_item(self.player.inventory.selected_item().stack.item).properties && block_item.block != AIR {
-                            let coordinate = (Vector3::from(coordinate)+face.direction()).into();
+                            let coordinate = (IVec3::from(coordinate)+face.direction()).into();
                             let before = self.chunk_manager.get_block(coordinate);
                             self.chunk_manager.set_block(coordinate, block_item.block, true);
                             if self.player.colliding_world(&self.chunk_manager, &self.registries) {
@@ -528,7 +528,7 @@ impl <'s> Game<'s> {
                                 for _ in 0..10 {
                                     self.particle_manager.add_particle(Particle {
                                         particle_type: ParticleType::BlockBreak,
-                                        position: (Vector3::from(coordinate).cast().unwrap()+vec3(rand::random_range(0.0..1.0), rand::random_range(0.0..1.0), rand::random_range(0.0..1.0))).extend(1.0).into(),
+                                        position: (IVec3::from(coordinate).as_vec3()+vec3(rand::random_range(0.0..1.0), rand::random_range(0.0..1.0), rand::random_range(0.0..1.0))).extend(1.0).into(),
                                         velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*2.0).into(),
                                         color: before_block.color,
                                         lifetime: Duration::from_secs_f32(20.0),
@@ -537,7 +537,7 @@ impl <'s> Game<'s> {
                                 if before_block.drops != items::NOTHING {
                                     self.chunk_manager.get_chunk_or_create(chunk_for_block_position(coordinate)).add_entity(Entity {
                                         entity_type: TypedEntity::Item { stack: InventoryItemStack::new(ItemStack::new(before_block.drops, 1), &self.registries) },
-                                        position: Vector3::<i32>::from(coordinate).cast().unwrap()+vec3(0.5, 0.5, 0.5),
+                                        position: IVec3::from(coordinate).as_vec3()+vec3(0.5, 0.5, 0.5),
                                         velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*5.0).into(),
                                         time_alive: Duration::ZERO,
                                     });
@@ -548,7 +548,7 @@ impl <'s> Game<'s> {
                                 if rand::random_range(0.0..1.0) < 0.1*self.player.block_break_modifier(before_block, &self.registries) {
                                     self.particle_manager.add_particle(Particle {
                                         particle_type: ParticleType::BlockBreak,
-                                        position: (Vector3::from(coordinate).cast().unwrap()+vec3(rand::random_range(0.0..1.0), rand::random_range(0.0..1.0), rand::random_range(0.0..1.0))).extend(1.0).into(),
+                                        position: (IVec3::from(coordinate).as_vec3()+vec3(rand::random_range(0.0..1.0), rand::random_range(0.0..1.0), rand::random_range(0.0..1.0))).extend(1.0).into(),
                                         velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*4.0).into(),
                                         color: before_block.color,
                                         lifetime: Duration::from_secs_f32(20.0),
@@ -605,7 +605,7 @@ impl <'s> Game<'s> {
                     self.chunk_manager.get_chunk_or_create(chunk_for_world_position(self.player.position.into())).add_entity(Entity {
                         entity_type: TypedEntity::Item { stack: stack.clone() },
                         position: self.player.position,
-                        velocity: self.player.camera.get_forward_vec().mul_element_wise(vec3(20.0, 5.0, 20.0)),
+                        velocity: vec3_mul_elements(self.player.camera.get_forward_vec(), vec3(20.0, 5.0, 20.0)),
                         time_alive: Duration::ZERO,
                     });
                 }
@@ -663,7 +663,7 @@ impl <'s> Game<'s> {
                     let mut i = 0;
                     while i < item_entities.len() {
                         let entity = &item_entities[i];
-                        if let TypedEntity::Item { stack } = &entity.entity_type && entity.time_alive > Duration::from_secs_f32(0.5) && entity.position.distance2(self.player.position) < 4.0 {
+                        if let TypedEntity::Item { stack } = &entity.entity_type && entity.time_alive > Duration::from_secs_f32(0.5) && entity.position.distance_squared(self.player.position) < 4.0 {
                             if self.player.inventory.add(stack) {
                                 item_entities.remove(i);
                                 continue;
@@ -700,10 +700,10 @@ impl <'s> Game<'s> {
             let mut this_chunk_updates = vec![];
             std::mem::swap(&mut this_chunk_updates, &mut chunk.needed_chunk_updates);
             if chunk.model.is_some() && !chunk.creating_model && ChunkManager::lod_for_distance2(pos, self.player.position.into()) != chunk.lod {
-                this_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 0, 0), synchronous: false });
+                this_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, 0, 0), synchronous: false });
             }
             for needed_update in this_chunk_updates {
-                let actual_chunk_pos = needed_update.relative_chunk_pos+Vector3::<i32>::from(pos);
+                let actual_chunk_pos = needed_update.relative_chunk_pos+IVec3::from(pos);
                 if let Some(synchronous) = needed_chunk_updates.get(&actual_chunk_pos) {
                     if !synchronous && needed_update.synchronous {
                         needed_chunk_updates.insert(actual_chunk_pos, true);
@@ -748,7 +748,7 @@ impl <'s> Game<'s> {
         self.screen_info_binding.set_data(surface_ctx.queue(), ScreenInfo::new(self.screen_size, time, self.player.camera.to_raw()));
 
         if let Some((target_position, _)) = self.player.raycast(self.player.camera.get_forward_vec(), 6.0, &self.chunk_manager, &self.registries) {
-            self.cube_outline_model = Some(cube_outline_model(surface_ctx.device(), self.player.camera.build_view_projection_matrix(), Vector3::<i32>::from(target_position).cast().unwrap()));
+            self.cube_outline_model = Some(cube_outline_model(surface_ctx.device(), self.player.camera.build_view_projection_matrix(), IVec3::from(target_position).as_vec3()));
         } else {
             self.cube_outline_model = None;
         }

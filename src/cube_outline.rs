@@ -1,5 +1,5 @@
 use bespoke_engine::{binding::{Descriptor, UniformBinding}, culling::AABB, model::Model, shader::{Shader, ShaderInit, ShaderType}};
-use cgmath::{InnerSpace, Matrix, Matrix3, Matrix4, SquareMatrix, Vector3, Vector4};
+use glam::{Mat3, Mat4, Vec3, vec3, vec4};
 use wgpu::{Device, TextureFormat};
 
 use crate::{RES_SHADERS_CUBE_OUTLINE_WGSL, const_block_models::Vertex, game::ScreenInfo, instance::Instance};
@@ -94,7 +94,7 @@ pub fn cube_outline_shader<'a>(device: &Device, formats: Vec<TextureFormat>, scr
     // }
 }
 
-pub fn cube_outline_model(device: &Device, view_proj: Matrix4<f32>, position: Vector3<f32>) -> Model {
+pub fn cube_outline_model(device: &Device, view_proj: Mat4, position: Vec3) -> Model {
     let (vertices, indices) = generate_thick_wireframe_cube(view_proj, [1.0; 4]);
     Model::new_instances(vertices, &indices, vec![Instance { position, ..Default::default() }], AABB::zero(), device)
 }
@@ -103,7 +103,7 @@ pub fn cube_outline_model(device: &Device, view_proj: Matrix4<f32>, position: Ve
 /// the 12 edges is its own box, built from quads (two triangles per face).
 /// Positions are transformed by `view_proj`; `color` is applied to every vertex.
 pub fn generate_thick_wireframe_cube(
-    view_proj: Matrix4<f32>,
+    view_proj: Mat4,
     color: [f32; 4],
 ) -> (Vec<Vertex>, Vec<u32>) {
     generate_thick_wireframe_cube_with_params(view_proj, color, 1.0, 0.02)
@@ -113,7 +113,7 @@ pub fn generate_thick_wireframe_cube(
 /// the cube's edge length (`size`) and the wire `thickness`. The cube spans
 /// (0,0,0) to (size,size,size).
 pub fn generate_thick_wireframe_cube_with_params(
-    view_proj: Matrix4<f32>,
+    view_proj: Mat4,
     color: [f32; 4],
     size: f32,
     thickness: f32,
@@ -129,12 +129,12 @@ pub fn generate_thick_wireframe_cube_with_params(
     // transformation under non-uniform scale/skew. Swap `view_proj` for a
     // dedicated model matrix here if you need normals usable for lighting.
     let normal_mat3 = {
-        let m3 = Matrix3::from_cols(
-            view_proj.x.truncate(),
-            view_proj.y.truncate(),
-            view_proj.z.truncate(),
+        let m3 = Mat3::from_cols(
+            view_proj.x_axis.truncate(),
+            view_proj.y_axis.truncate(),
+            view_proj.z_axis.truncate(),
         );
-        m3.invert().map(|m| m.transpose()).unwrap_or(m3)
+        m3.inverse().transpose()
     };
 
     // Edges running along X: vary y and z between the two cube extremes.
@@ -143,8 +143,8 @@ pub fn generate_thick_wireframe_cube_with_params(
             add_box(
                 &mut vertices,
                 &mut indices,
-                Vector3::new(lo - t, y - t, z - t),
-                Vector3::new(hi + t, y + t, z + t),
+                vec3(lo - t, y - t, z - t),
+                vec3(hi + t, y + t, z + t),
                 color,
                 &normal_mat3,
             );
@@ -157,8 +157,8 @@ pub fn generate_thick_wireframe_cube_with_params(
             add_box(
                 &mut vertices,
                 &mut indices,
-                Vector3::new(x - t, lo - t, z - t),
-                Vector3::new(x + t, hi + t, z + t),
+                vec3(x - t, lo - t, z - t),
+                vec3(x + t, hi + t, z + t),
                 color,
                 &normal_mat3,
             );
@@ -171,8 +171,8 @@ pub fn generate_thick_wireframe_cube_with_params(
             add_box(
                 &mut vertices,
                 &mut indices,
-                Vector3::new(x - t, y - t, lo - t),
-                Vector3::new(x + t, y + t, hi + t),
+                vec3(x - t, y - t, lo - t),
+                vec3(x + t, y + t, hi + t),
                 color,
                 &normal_mat3,
             );
@@ -187,10 +187,10 @@ pub fn generate_thick_wireframe_cube_with_params(
 fn add_box(
     vertices: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
-    min: Vector3<f32>,
-    max: Vector3<f32>,
+    min: Vec3,
+    max: Vec3,
     color: [f32; 4],
-    normal_mat3: &Matrix3<f32>,
+    normal_mat3: &Mat3,
 ) {
     // (face normal, 4 corners in CCW winding when viewed from outside)
     let faces: [([f32; 3], [[f32; 3]; 4]); 6] = [
@@ -259,11 +259,11 @@ fn add_box(
     for (normal, quad) in faces.iter() {
         let base_index = vertices.len() as u32;
 
-        let n = normal_mat3 * Vector3::new(normal[0], normal[1], normal[2]);
-        let n = if n.magnitude2() > 0.0 { n.normalize() } else { n };
+        let n = normal_mat3 * vec3(normal[0], normal[1], normal[2]);
+        let n = if n.length_squared() > 0.0 { n.normalize() } else { n };
 
         for p in quad.iter() {
-            let world_pos = Vector4::new(p[0], p[1], p[2], 1.0);
+            let world_pos = vec4(p[0], p[1], p[2], 1.0);
 
             vertices.push(Vertex {
                 position: [world_pos.x, world_pos.y, world_pos.z, world_pos.w],

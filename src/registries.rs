@@ -1,5 +1,5 @@
 use bespoke_engine::{binding::{Descriptor, UniformBinding}, camera::OrthographicCamera, model::Render, resource_compiler::AtlasSection, resource_loader::ResourceConst, shader::{Shader, UniformShaderInit}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture}};
-use cgmath::{Matrix4, vec2, vec3};
+use glam::{Mat4, mat4, uvec2, vec3, vec4};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::{Origin3d, RenderPassDepthStencilAttachment, TexelCopyTextureInfo, wgt::CommandEncoderDescriptor};
@@ -115,7 +115,7 @@ impl ItemAtlasRegistry {
         start_y: f32,
         width: f32,
         height: f32,
-    ) -> Matrix4<f32> {
+    ) -> Mat4 {
         let scale_x = width;
         let scale_y = height;
 
@@ -125,11 +125,11 @@ impl ItemAtlasRegistry {
         let translate_x = center_u * 2.0 - 1.0;
         let translate_y = 1.0 - center_v * 2.0;
 
-        let m = Matrix4::new(
-            scale_x, 0.0,     0.0, 0.0,
-            0.0,     scale_y, 0.0, 0.0,
-            0.0,     0.0,     1.0, 0.0,
-            translate_x, translate_y, 0.0, 1.0,
+        let m = mat4(
+            vec4(scale_x, 0.0,     0.0, 0.0),
+            vec4(0.0,     scale_y, 0.0, 0.0),
+            vec4(0.0,     0.0,     1.0, 0.0),
+            vec4(translate_x, translate_y, 0.0, 1.0),
         );
         m
     }
@@ -208,7 +208,7 @@ impl Registries {
             let needed_dimensions = match &item.properties {
                 ItemProperties::BlockItem(_block_item) => {
                     println!("added {} as block item", item.id);
-                    vec2(item_atlas_registry.rendered_item_resolution, item_atlas_registry.rendered_item_resolution)
+                    uvec2(item_atlas_registry.rendered_item_resolution, item_atlas_registry.rendered_item_resolution)
                 },
                 ItemProperties::BasicItem(basic_item) => {
                     println!("added {} as basic item", item.id);
@@ -233,7 +233,7 @@ impl Registries {
             let fractional_section = item_atlas_registry.fractional_atlas_section(&next_section);
             match &item.properties {
                 ItemProperties::BlockItem(block_item) => {
-                    item_atlas_registry.block_renderer_transform_matrix.set_data(surface_ctx.queue(), ItemAtlasRegistry::viewport_subsection_matrix(fractional_section[0], fractional_section[1], fractional_section[2], fractional_section[3]).into());
+                    item_atlas_registry.block_renderer_transform_matrix.set_data(surface_ctx.queue(), ItemAtlasRegistry::viewport_subsection_matrix(fractional_section[0], fractional_section[1], fractional_section[2], fractional_section[3]).to_cols_array_2d());
                     item_atlas_registry.render_block(surface_ctx, self.block_registry.get_block(&block_item.block), &self.block_atlas_texture, &block_renderer_shader);
                     item_atlas_registry.item_sections.insert(item.id, next_section);
                 },

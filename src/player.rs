@@ -1,22 +1,21 @@
-use std::time::Duration;
+use std::{hash::Hash, time::Duration};
 
 use bespoke_engine::camera::Camera;
-use cgmath::{InnerSpace, Vector3, vec3};
+use glam::{IVec3, Vec3, ivec3, vec3};
 use ordered_float::OrderedFloat;
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
 
 use crate::{blocks::Block, chunk::ChunkManager, inventory::Inventory, registries::{Registries, TagID}};
 
 pub struct Player {
     pub camera: Camera,
-    pub position: Vector3<f32>,
-    pub velocity: Vector3<f32>,
+    pub position: Vec3,
+    pub velocity: Vec3,
     pub time_since_ground: Duration,
     pub movement_mode: i32,
     pub break_cooldown: Duration,
     pub break_progress: Duration,
-    pub break_position: Option<Vector3<i32>>,
+    pub break_position: Option<IVec3>,
 
     pub inventory: Inventory,
     pub attributes: FxHashMap<EntityAttribute, f32>,
@@ -24,7 +23,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(position: Vector3<f32>, camera: Camera, registries: &Registries) -> Self {
+    pub fn new(position: Vec3, camera: Camera, registries: &Registries) -> Self {
         let mut _self = Self {
             camera,
             position,
@@ -41,7 +40,7 @@ impl Player {
         _self
     }
 
-    pub fn move_player(&mut self, delta: Vector3<f32>, world: &ChunkManager, registries: &Registries) {
+    pub fn move_player(&mut self, delta: Vec3, world: &ChunkManager, registries: &Registries) {
         let x_steps = (delta.x.abs()/0.5).ceil();
         for _ in 0..x_steps as i32 {
             self.position.x += delta.x/x_steps;
@@ -120,7 +119,7 @@ impl Player {
         ];
         for offset in point_offsets {
             let position = self.position+offset;
-            let block_position = position.map(|it| it.floor() as i32).into();
+            let block_position = position.floor().as_ivec3().into();
             let block = world.get_block(block_position);
             if registries.block_registry.get_block(&block).solid {
                 return true;
@@ -129,12 +128,12 @@ impl Player {
         return false;
     }
 
-    pub fn raycast(&self, direction: Vector3<f32>, max_distance: f32, world: &ChunkManager, registries: &Registries) -> Option<([i32;3], BlockFace)> {
-        if direction.magnitude2() == 0.0 {
+    pub fn raycast(&self, direction: Vec3, max_distance: f32, world: &ChunkManager, registries: &Registries) -> Option<([i32;3], BlockFace)> {
+        if direction.length_squared() == 0.0 {
             return None;
         }
         let dir = direction.normalize();
-        let mut voxel: [i32; 3] = self.position.map(|it| it.floor() as i32).into();
+        let mut voxel: [i32; 3] = self.position.floor().as_ivec3().into();
 
         let step_x = if dir.x > 0.0 { 1 } else if dir.x < 0.0 { -1 } else { 0 };
         let step_y = if dir.y > 0.0 { 1 } else if dir.y < 0.0 { -1 } else { 0 };
@@ -205,15 +204,35 @@ impl Player {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Clone, Copy, Debug, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive)]
+#[rkyv(
+    compare(PartialEq),
+    derive(Hash, PartialEq, Eq),
+)]
 pub enum EntityAttribute {
     BlockBreakSpeed,
 }
 
-#[derive(PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(PartialEq, serde::Serialize, serde::Deserialize, Clone, Copy, Debug, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive)]
 pub enum AttributeModifier {
-    Multiply(OrderedFloat<f32>),
-    Add(OrderedFloat<f32>),
+    Multiply(f32),
+    Add(f32),
+}
+
+impl Eq for AttributeModifier {}
+impl Hash for AttributeModifier {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            AttributeModifier::Add(v) => {
+                0_usize.hash(state);
+                OrderedFloat(*v).hash(state);
+            },
+            AttributeModifier::Multiply(v) => {
+                1_usize.hash(state);
+                OrderedFloat(*v).hash(state);
+            }
+        }
+    }
 }
 
 impl Default for AttributeModifier {
@@ -225,8 +244,8 @@ impl Default for AttributeModifier {
 impl AttributeModifier {
     pub fn modify(&self, value: f32) -> f32 {
         match self {
-            AttributeModifier::Add(m) => value + **m,
-            AttributeModifier::Multiply(m) => value * **m
+            AttributeModifier::Add(m) => value + *m,
+            AttributeModifier::Multiply(m) => value * *m
         }
     }
 }
@@ -254,14 +273,14 @@ pub enum BlockFace {
 }
 
 impl BlockFace {
-    pub fn direction(&self) -> Vector3<i32> {
+    pub fn direction(&self) -> IVec3 {
         match self {
-            BlockFace::Down => vec3(0, -1, 0),
-            BlockFace::Up => vec3(0, 1, 0),
-            BlockFace::West => vec3(-1, 0, 0),
-            BlockFace::East => vec3(1, 0, 0),
-            BlockFace::South => vec3(0, 0, 1),
-            BlockFace::North => vec3(0, 0, -1),
+            BlockFace::Down => ivec3(0, -1, 0),
+            BlockFace::Up => ivec3(0, 1, 0),
+            BlockFace::West => ivec3(-1, 0, 0),
+            BlockFace::East => ivec3(1, 0, 0),
+            BlockFace::South => ivec3(0, 0, 1),
+            BlockFace::North => ivec3(0, 0, -1),
         }
     }
 }

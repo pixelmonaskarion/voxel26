@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bespoke_engine::{InstanceTrait, binding::{Descriptor, UniformBinding}, compute::{ComputeOutput, ComputeShader}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::load_resource_string, shader::{Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, window::BasicVertex};
 use bytemuck::{Pod, Zeroable, bytes_of, checked::from_bytes};
-use cgmath::Vector3;
+use glam::{Mat4, Vec3, vec3};
 use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, RenderPass, ShaderStages, TextureFormat, wgt::BufferDescriptor};
 
 use crate::{RES_SHADERS_PARTICLE_RENDERER_WGSL, game::ScreenInfo};
@@ -231,13 +231,13 @@ impl ParticleType {
 
 #[derive(Clone)]
 pub struct ParticleInstance {
-    pub position: cgmath::Vector3<f32>,
+    pub position: Vec3,
     pub color: [f32; 4],
 }
 
 impl InstanceTrait for ParticleInstance {
-    fn instance_transform(&self) -> cgmath::Matrix4<f32> {
-        cgmath::Matrix4::from_translation(self.position)
+    fn instance_transform(&self) -> Mat4 {
+        Mat4::from_translation(self.position)
     }
 }
 
@@ -249,7 +249,7 @@ impl ParticleInstance {
 
 impl Default for ParticleInstance {
     fn default() -> Self {
-        Self { position: Vector3::new(0.0, 0.0, 0.0), color: [1.0; 4] }
+        Self { position: vec3(0.0, 0.0, 0.0), color: [1.0; 4] }
     }
 }
 

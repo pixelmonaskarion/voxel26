@@ -1,21 +1,19 @@
 use std::{collections::HashMap, hash::{DefaultHasher, Hash, Hasher}, ops::{AddAssign, Mul}, sync::{Arc, mpsc}, time::{Duration, SystemTime}};
 
 use bespoke_engine::{model::Render, shader::Shader, surface_context::SurfaceCtx};
-use cgmath::{InnerSpace, MetricSpace, Vector2, Vector3, vec2, vec3};
+use glam::{DVec2, IVec3, Vec3, dvec2, ivec3};
 use noise::{NoiseFn, Perlin};
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
-use serde::{Deserialize, Serialize};
 use serde_inline_default::serde_inline_default;
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, RenderPass};
 use itertools::Itertools;
 
 use crate::{BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, blocks::{self, AIR, Block, BlockID, DIRT, GRASS, NOT_RENDERED_LAYER, STONE, WATER}, const_block_models::{BlockModel, BlockModelTrait, Vertex}, entity::{Entity, EntityRenderManager, EntityType}, features::{Feature, FeatureType, bush::BushFeature, caves::WormCavesFeature, ore::OreFeature, tree::TreeFeature}, registries::Registries, util::{chunk_for_block_position, neighbors}};
 
-#[derive(Serialize, Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde_inline_default]
 pub struct Chunk {
-    pub blocks: Vec<BlockID>,
-    pub generated_blocks: bool,
+    pub data: ChunkData,
     #[serde(skip)]
     #[serde_inline_default(None)]
     pub model: Option<ChunkModel>,
@@ -23,11 +21,16 @@ pub struct Chunk {
     #[serde_inline_default(false)]
     pub creating_model: bool,
     #[serde(skip)]
-    pub entities: HashMap<EntityType, Vec<Entity>>,
-    #[serde(skip)]
     pub needed_chunk_updates: Vec<NeededChunkUpdate>,
     #[serde_inline_default(0)]
     pub lod: i32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+pub struct ChunkData {
+    pub blocks: Vec<BlockID>,
+    pub generated_blocks: bool,
+    pub entities: HashMap<EntityType, Vec<Entity>>,
 }
 
 pub struct ChunkModel {
@@ -43,7 +46,7 @@ pub struct ChunkModel {
 
 #[derive(Clone)]
 pub struct NeededChunkUpdate {
-    pub relative_chunk_pos: Vector3<i32>,
+    pub relative_chunk_pos: IVec3,
     pub synchronous: bool,
 }
 
@@ -58,8 +61,10 @@ pub fn index_in_chunk(x: u32, y: u32, z: u32) -> usize {
 impl Chunk {
     pub fn new() -> Self {
         let mut _self = Self {
-            blocks: vec![0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize],
-            generated_blocks: false,
+            data: ChunkData {
+                blocks: vec![0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize],
+                generated_blocks: false,
+            },
             creating_model: false,
             model: None,
             entities: HashMap::new(),
@@ -70,25 +75,25 @@ impl Chunk {
     }
 
     pub fn set_block(&mut self, local_coords: [u32; 3], block: BlockID, update_synchronously: bool) {
-        self.blocks[index_in_chunk(local_coords[0], local_coords[1], local_coords[2])] = block;
-        self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 0, 0), synchronous: update_synchronously });
+        self.data.blocks[index_in_chunk(local_coords[0], local_coords[1], local_coords[2])] = block;
+        self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, 0, 0), synchronous: update_synchronously });
         if local_coords[0] == 0 {
-            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(-1, 0, 0), synchronous: update_synchronously });
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(-1, 0, 0), synchronous: update_synchronously });
         }
         if local_coords[1] == 0 {
-            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, -1, 0), synchronous: update_synchronously });
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, -1, 0), synchronous: update_synchronously });
         }
         if local_coords[2] == 0 {
-            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 0, -1), synchronous: update_synchronously });
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, 0, -1), synchronous: update_synchronously });
         }
         if local_coords[0] == CHUNK_SIZE-1 {
-            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(1, 0, 0), synchronous: update_synchronously });
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(1, 0, 0), synchronous: update_synchronously });
         }
         if local_coords[1] == CHUNK_SIZE-1 {
-            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 1, 0), synchronous: update_synchronously });
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, 1, 0), synchronous: update_synchronously });
         }
         if local_coords[2] == CHUNK_SIZE-1 {
-            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 0, 1), synchronous: update_synchronously });
+            self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, 0, 1), synchronous: update_synchronously });
         }
     }
 
@@ -283,9 +288,9 @@ impl ChunkManager {
         while let Ok(res) = self.gen_blocks_rx.try_recv() {
             self.pending_requests -= 1;
             if let Some(chunk) = self.chunks.get_mut(res.chunk_position) {
-                chunk.blocks = res.chunk_blocks;
-                chunk.generated_blocks = true;
-                chunk.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: vec3(0, 0, 0), synchronous: false });
+                chunk.data.blocks = res.chunk_blocks;
+                chunk.data.generated_blocks = true;
+                chunk.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, 0, 0), synchronous: false });
                 chunk.needed_chunk_updates.extend(neighbors([0; 3]).into_iter().map(|it| NeededChunkUpdate { relative_chunk_pos: it.into(), synchronous: false }));
             }
         }
@@ -315,13 +320,13 @@ impl ChunkManager {
             self.gen_model_tx.send(GenerateChunkMeshRequest {
                 chunk_position,
                 player_position,
-                chunk_blocks: chunk.blocks.clone(),
-                cpx: self.chunks.get([chunk_position[0]+1, chunk_position[1], chunk_position[2]]).map(|it| it.blocks.clone()),
-                cnx: self.chunks.get([chunk_position[0]-1, chunk_position[1], chunk_position[2]]).map(|it| it.blocks.clone()),
-                cpy: self.chunks.get([chunk_position[0], chunk_position[1]+1, chunk_position[2]]).map(|it| it.blocks.clone()),
-                cny: self.chunks.get([chunk_position[0], chunk_position[1]-1, chunk_position[2]]).map(|it| it.blocks.clone()),
-                cpz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]+1]).map(|it| it.blocks.clone()),
-                cnz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]-1]).map(|it| it.blocks.clone()),
+                chunk_blocks: chunk.data.blocks.clone(),
+                cpx: self.chunks.get([chunk_position[0]+1, chunk_position[1], chunk_position[2]]).map(|it| it.data.blocks.clone()),
+                cnx: self.chunks.get([chunk_position[0]-1, chunk_position[1], chunk_position[2]]).map(|it| it.data.blocks.clone()),
+                cpy: self.chunks.get([chunk_position[0], chunk_position[1]+1, chunk_position[2]]).map(|it| it.data.blocks.clone()),
+                cny: self.chunks.get([chunk_position[0], chunk_position[1]-1, chunk_position[2]]).map(|it| it.data.blocks.clone()),
+                cpz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]+1]).map(|it| it.data.blocks.clone()),
+                cnz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]-1]).map(|it| it.data.blocks.clone()),
             }).unwrap();
         }
     }
@@ -342,17 +347,17 @@ impl ChunkManager {
 
     pub fn generate_model_now(&mut self, chunk_position: [i32; 3], player_position: [f32; 3], registries: &Registries, surface_ctx: &dyn SurfaceCtx) {
         let time = SystemTime::now();
-        if let Some(chunk_blocks) = self.chunks.get(chunk_position).map(|it| it.blocks.clone()) {
+        if let Some(chunk_blocks) = self.chunks.get(chunk_position).map(|it| it.data.blocks.clone()) {
             let req = GenerateChunkMeshRequest {
                 chunk_position,
                 player_position,
                 chunk_blocks,
-                cpx: self.chunks.get([chunk_position[0]+1, chunk_position[1], chunk_position[2]]).map(|it| it.blocks.clone()),
-                cnx: self.chunks.get([chunk_position[0]-1, chunk_position[1], chunk_position[2]]).map(|it| it.blocks.clone()),
-                cpy: self.chunks.get([chunk_position[0], chunk_position[1]+1, chunk_position[2]]).map(|it| it.blocks.clone()),
-                cny: self.chunks.get([chunk_position[0], chunk_position[1]-1, chunk_position[2]]).map(|it| it.blocks.clone()),
-                cpz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]+1]).map(|it| it.blocks.clone()),
-                cnz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]-1]).map(|it| it.blocks.clone()),
+                cpx: self.chunks.get([chunk_position[0]+1, chunk_position[1], chunk_position[2]]).map(|it| it.data.blocks.clone()),
+                cnx: self.chunks.get([chunk_position[0]-1, chunk_position[1], chunk_position[2]]).map(|it| it.data.blocks.clone()),
+                cpy: self.chunks.get([chunk_position[0], chunk_position[1]+1, chunk_position[2]]).map(|it| it.data.blocks.clone()),
+                cny: self.chunks.get([chunk_position[0], chunk_position[1]-1, chunk_position[2]]).map(|it| it.data.blocks.clone()),
+                cpz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]+1]).map(|it| it.data.blocks.clone()),
+                cnz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]-1]).map(|it| it.data.blocks.clone()),
             };
             let res = Self::generate_mesh_req(req, surface_ctx.device(), registries);
             self.chunks.get_mut(chunk_position).unwrap().model = res.chunk_model;
@@ -415,7 +420,7 @@ impl ChunkManager {
                     }
                     let cave_here = cave_noise > 0.90;
                     if yf64 <= height {
-                        if yf64+5.0 < height || gradient.magnitude() > 0.5 {
+                        if yf64+5.0 < height || gradient.length() > 0.5 {
                             blocks[index_in_chunk(x, y, z)] = STONE;
                         } else if yf64+1.0 < height {
                             blocks[index_in_chunk(x, y, z)] = DIRT;
@@ -986,7 +991,7 @@ impl ChunkManager {
 
     pub fn chunk_loaded(&self, chunk_position: [i32; 3]) -> bool {
         if self.chunks.main.contains_key(&chunk_position) {
-            return self.chunks.main.get(&chunk_position).unwrap().generated_blocks;
+            return self.chunks.main.get(&chunk_position).unwrap().data.generated_blocks;
         } else {
             return false;
         }
@@ -1003,7 +1008,7 @@ impl ChunkManager {
         let by = y.rem_euclid(CHUNK_SIZE as i32) as u32;
         let bz = z.rem_euclid(CHUNK_SIZE as i32) as u32;
         if let Some(chunk) = self.chunks.get([cx, cy, cz]) {
-            return chunk.blocks[index_in_chunk(bx, by, bz)];
+            return chunk.data.blocks[index_in_chunk(bx, by, bz)];
         } else {
             return AIR;
         }
@@ -1020,13 +1025,12 @@ impl ChunkManager {
         let by = y.rem_euclid(CHUNK_SIZE as i32) as u32;
         let bz = z.rem_euclid(CHUNK_SIZE as i32) as u32;
         if let Some(chunk) = self.chunks.get_mut([cx, cy, cz]) {
-            chunk.blocks[index_in_chunk(bx, by, bz)] = block_id;
             chunk.set_block([bx, by, bz], block_id, update_synchronously);
         }
     }
 
     pub fn lod_for_distance2(chunk_position: [i32; 3], player_position: [f32; 3]) -> i32 {
-        2i32.pow((Vector3::<i32>::from(chunk_position).cast::<f32>().unwrap().mul(CHUNK_SIZE as f32).distance2(Vector3::<f32>::from(player_position))/250.0f32.powi(2).floor()) as u32).min(4).max(1)
+        2i32.pow((IVec3::from(chunk_position).as_vec3().mul(CHUNK_SIZE as f32).distance_squared(Vec3::from(player_position))/250.0f32.powi(2).floor()) as u32).min(4).max(1)
     }
 }
 
@@ -1065,7 +1069,7 @@ struct ChunkBlockGeneratorResources {
 
 struct HeightAt {
     height: f64,
-    gradient: Vector2<f64>,
+    gradient: DVec2,
 }
 
 impl ChunkBlockGeneratorResources {
@@ -1087,7 +1091,7 @@ impl ChunkBlockGeneratorResources {
         let gen_width;
         let gen_height;
         let noise_map;
-        let chunk_pos: Vector3<i32> = chunk_for_block_position([x, 0, z]).into();
+        let chunk_pos: IVec3 = chunk_for_block_position([x, 0, z]).into();
         let base_xf64 = x as f64;
         let base_zf64 = z as f64;
         if cache {
@@ -1124,7 +1128,7 @@ impl ChunkBlockGeneratorResources {
                 let mut height = 0.0;
                 let xf64 = base_xf64 + x as f64;
                 let zf64 = base_zf64 + z as f64;
-                let mut noise_gradient = vec2(0.0, 0.0);
+                let mut noise_gradient = dvec2(0.0, 0.0);
                 for (noise_i, noise) in self.terrain_noises.iter().enumerate() {
                     position_scale *= 0.5;
                     height_scale *= 0.5;
@@ -1143,8 +1147,8 @@ impl ChunkBlockGeneratorResources {
                     if z+1 < map_height {
                         noise_map[x as usize * map_height * (self.terrain_noises.len()+1) + (z+1) as usize * (self.terrain_noises.len()+1) + noise_i] = noise_pz;
                     }
-                    noise_gradient += vec2(noise_here-noise_px, noise_here-noise_pz)/position_scale;
-                    height += noise_here * height_scale * 1.0/(1.0+noise_gradient.magnitude());
+                    noise_gradient += dvec2(noise_here-noise_px, noise_here-noise_pz)/position_scale;
+                    height += noise_here * height_scale * 1.0/(1.0+noise_gradient.length());
                 }
                 noise_map[x as usize * map_height * (self.terrain_noises.len()+1) + z as usize * (self.terrain_noises.len()+1) + self.terrain_noises.len()] = height;
             }
@@ -1152,7 +1156,7 @@ impl ChunkBlockGeneratorResources {
         let height = noise_map[x as usize * map_height * (self.terrain_noises.len()+1) + z as usize * (self.terrain_noises.len()+1) + self.terrain_noises.len()];
         let height_px = noise_map[(x as usize+1) * map_height * (self.terrain_noises.len()+1) + z as usize * (self.terrain_noises.len()+1) + self.terrain_noises.len()];
         let height_pz = noise_map[x as usize * map_height * (self.terrain_noises.len()+1) + (z as usize+1) * (self.terrain_noises.len()+1) + self.terrain_noises.len()];
-        let gradient = vec2(height_px-height, height_pz-height);
+        let gradient = dvec2(height_px-height, height_pz-height);
         return HeightAt { height, gradient }
     }
 }

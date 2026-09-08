@@ -1,6 +1,6 @@
 use bespoke_engine::{binding::Descriptor, culling::AABB, model::{Model, ToRaw}, surface_context::SurfaceCtx};
 use bytemuck::{NoUninit, bytes_of};
-use cgmath::{Vector2, vec2};
+use glam::{Vec2, vec2};
 use wgpu_text::glyph_brush::{HorizontalAlign, Layout, OwnedSection, OwnedText, VerticalAlign};
 
 use crate::{inventory::Inventory};
@@ -228,7 +228,7 @@ pub fn create_inventory_model(surface_ctx: &dyn SurfaceCtx, inventory: &OpenInve
     let mut indices: Vec<u16> = vec![];
     let mut items = vec![];
     //0, 0 is top left
-    let mut add_quad = |start: Vector2<f32>, end: Vector2<f32>, rw: f32, rh: f32, ax: f32, ay: f32| {
+    let mut add_quad = |start: Vec2, end: Vec2, rw: f32, rh: f32, ax: f32, ay: f32| {
         let start = vec2(start.x-total_width/2.0, -start.y+total_height/2.0);
         let end = vec2(end.x-total_width/2.0, -end.y+total_height/2.0);
         let start_index = vertices.len() as u16;
@@ -240,7 +240,7 @@ pub fn create_inventory_model(surface_ctx: &dyn SurfaceCtx, inventory: &OpenInve
         ]);
         indices.extend_from_slice(&[0+start_index, 2+start_index, 1+start_index, 2+start_index, 3+start_index, 1+start_index]);
     };
-    let mut add_item = |start: Vector2<f32>, end: Vector2<f32>, rw: f32, rh: f32| {
+    let mut add_item = |start: Vec2, end: Vec2, rw: f32, rh: f32| {
         let start = vec2(start.x-total_width/2.0, -start.y+total_height/2.0);
         let end = vec2(end.x-total_width/2.0, -end.y+total_height/2.0);
         items.push(Model::new(vec![
@@ -316,7 +316,7 @@ pub fn text_sections_for_inventory<'a>(surface_ctx: &dyn SurfaceCtx, item_at: &'
     sections
 }
 
-pub fn mouse_tile_coords<'a>(mouse_coords: Vector2<f32>, surface_ctx: &dyn SurfaceCtx, inventory: &'a mut OpenInventory) -> Option<InventoryLocation<'a>> {
+pub fn mouse_tile_coords<'a>(mouse_coords: Vec2, surface_ctx: &dyn SurfaceCtx, inventory: &'a mut OpenInventory) -> Option<InventoryLocation<'a>> {
     let screen_coords = vec2(mouse_coords.x*2.0 - 1.0, -mouse_coords.y*2.0 + 1.0);
     let aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
     let margins = inventory_margins(inventory);

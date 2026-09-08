@@ -2,7 +2,7 @@ use core::panic;
 
 use bespoke_engine::{binding::WgslType, surface_context::SurfaceCtx, texture::Texture};
 use bytemuck::{Pod, Zeroable};
-use cgmath::{InnerSpace, vec3};
+use glam::vec3;
 use image::{DynamicImage, Rgba};
 use wgpu::TextureFormat;
 

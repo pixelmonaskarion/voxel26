@@ -2,7 +2,7 @@ use std::{fmt::Debug, fs::read, path::PathBuf};
 
 use bespoke_engine::{binding::Descriptor, model::ToRaw, resource_compiler::Atlas, resource_loader::{ResourceConst, const_name}};
 use bytemuck::{NoUninit, bytes_of};
-use cgmath::{Vector3, vec2};
+use glam::{IVec3, Vec3, vec2, vec3};
 use serde::Deserialize;
 
 #[repr(C)]
@@ -15,8 +15,8 @@ pub struct Vertex {
 
 impl Vertex {
     #[allow(dead_code)]
-    pub fn pos(&self) -> Vector3<f32> {
-        return Vector3::new(self.position[0], self.position[1], self.position[2]);
+    pub fn pos(&self) -> Vec3 {
+        return vec3(self.position[0], self.position[1], self.position[2]);
     }
 }
 
@@ -91,8 +91,8 @@ pub fn parse_model(file_contents: Vec<u8>, block_atlas: &Atlas) -> BlockModel {
         let altas_section = |texture| {
             block_atlas.entries.get(texture).unwrap().clone()
         };
-        let from: Vector3<f32> = Vector3::from(element.from).cast().unwrap();
-        let to: Vector3<f32> = Vector3::from(element.to).cast().unwrap();
+        let from = IVec3::from(element.from).as_vec3();
+        let to = IVec3::from(element.to).as_vec3();
         let scale = 1.0/16.0;
 
         //north
