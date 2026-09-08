@@ -1,4 +1,4 @@
-use glam::Vec3;
+use glam::{IVec3, Vec3, ivec3};
 
 use crate::{chunk::{CHUNK_SIZE, ChunkManager}, registries::Registries};
 
@@ -64,35 +64,35 @@ impl Iterator for RingIter {
     }
 }
 
-pub fn neighbors(chunk_pos: [i32; 3]) -> [[i32; 3]; 6] {
+pub fn neighbors(chunk_pos: IVec3) -> [IVec3; 6] {
     [
-        [chunk_pos[0]+1, chunk_pos[1], chunk_pos[2]],
-        [chunk_pos[0]-1, chunk_pos[1], chunk_pos[2]],
-        [chunk_pos[0], chunk_pos[1]+1, chunk_pos[2]],
-        [chunk_pos[0], chunk_pos[1]-1, chunk_pos[2]],
-        [chunk_pos[0], chunk_pos[1], chunk_pos[2]+1],
-        [chunk_pos[0], chunk_pos[1], chunk_pos[2]-1],
+        ivec3(chunk_pos[0]+1, chunk_pos[1], chunk_pos[2]),
+        ivec3(chunk_pos[0]-1, chunk_pos[1], chunk_pos[2]),
+        ivec3(chunk_pos[0], chunk_pos[1]+1, chunk_pos[2]),
+        ivec3(chunk_pos[0], chunk_pos[1]-1, chunk_pos[2]),
+        ivec3(chunk_pos[0], chunk_pos[1], chunk_pos[2]+1),
+        ivec3(chunk_pos[0], chunk_pos[1], chunk_pos[2]-1),
     ]
 }
 
-pub fn chunk_for_block_position(block_position: [i32; 3]) -> [i32; 3] {
+pub fn chunk_for_block_position(block_position: IVec3) -> IVec3 {
     let x = block_position[0];
     let y = block_position[1];
     let z = block_position[2];
     let cx = (x as f32 /CHUNK_SIZE as f32).floor() as i32;
     let cy = (y as f32 /CHUNK_SIZE as f32).floor() as i32;
     let cz = (z as f32 /CHUNK_SIZE as f32).floor() as i32;
-    return [cx, cy, cz];
+    return ivec3(cx, cy, cz);
 }
 
-pub fn chunk_for_world_position(world_position: [f32; 3]) -> [i32; 3] {
+pub fn chunk_for_world_position(world_position: [f32; 3]) -> IVec3 {
     let x = world_position[0];
     let y = world_position[1];
     let z = world_position[2];
     let cx = (x/CHUNK_SIZE as f32).floor() as i32;
     let cy = (y/CHUNK_SIZE as f32).floor() as i32;
     let cz = (z/CHUNK_SIZE as f32).floor() as i32;
-    return [cx, cy, cz];
+    return ivec3(cx, cy, cz);
 }
 
 pub fn colliding_world(world: &ChunkManager, center: Vec3, positive_size: Vec3, negative_size: Vec3, registries: &Registries) -> bool {
@@ -109,7 +109,7 @@ pub fn colliding_world(world: &ChunkManager, center: Vec3, positive_size: Vec3, 
     for bx in min_block_x..=max_block_x {
         for by in min_block_y..=max_block_y {
             for bz in min_block_z..=max_block_z {
-                let block_position = [bx, by, bz];
+                let block_position = ivec3(bx, by, bz);
                 let block = world.get_block(block_position);
                 if registries.block_registry.get_block(&block).solid {
                     return true;

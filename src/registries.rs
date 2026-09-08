@@ -4,12 +4,12 @@ use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::{Origin3d, RenderPassDepthStencilAttachment, TexelCopyTextureInfo, wgt::CommandEncoderDescriptor};
 
-use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, GENERATED_BLOCK_ATLAS_PNG, GENERATED_CRAFTING_RECIPES_JSON, GENERATED_ITEM_ATLAS_PNG, ITEM_ATLAS_PNG_FARTHEST_SECTION, RES_SHADERS_BLOCK_RENDERER_WGSL, block_models::block_model, blocks::{Block, BlockID, NOT_RENDERED_LAYER, }, const_block_models::Vertex, crafting::{CraftingIngredientID, CraftingRecipe, CraftingRecipeJson}, game::ScreenInfo, inventory::ItemStack, items::{self, BlockItem, Item, ItemID, ItemProperties}};
+use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, GENERATED_BLOCK_ATLAS_PNG, GENERATED_CRAFTING_RECIPES_JSON, GENERATED_ITEM_ATLAS_PNG, ITEM_ATLAS_PNG_FARTHEST_SECTION, RES_SHADERS_BLOCK_RENDERER_WGSL, block_models::block_model, block_states::BlockStateProvider, blocks::{Block, BlockID, NOT_RENDERED_LAYER, }, const_block_models::Vertex, crafting::{CraftingIngredientID, CraftingRecipe, CraftingRecipeJson}, game::ScreenInfo, inventory::ItemStack, items::{self, BlockItem, Item, ItemID, ItemIDRep, ItemProperties}};
 
 pub struct ItemAtlasRegistry {
     pub texture: UniformBinding<Texture>,
     depth_texture: DepthTexture,
-    item_sections: FxHashMap<ItemID, AtlasSection>,
+    item_sections: FxHashMap<ItemIDRep, AtlasSection>,
     most_recent_section: AtlasSection,
     block_renderer_screen_info: UniformBinding<ScreenInfo>,
     block_renderer_transform_matrix: UniformBinding<[[f32; 4]; 4]>,
@@ -59,8 +59,9 @@ impl ItemAtlasRegistry {
     //     vec2(1.0/self.items_per_row() as f32, 1.0/self.num_rows() as f32)
     // }
 
-    pub fn get_item(&self, item: &ItemID) -> AtlasSection {
-        if let Some(section) = self.item_sections.get(item) {
+    pub fn get_item(&self, item: impl Into<ItemIDRep>) -> AtlasSection {
+        let item = item.into();
+        if let Some(section) = self.item_sections.get(&item) {
             return *section;
         } else {
             panic!("no atlas entry for item {item:?}");
@@ -162,6 +163,7 @@ pub struct Registries {
     pub block_registry: BlockRegistry,
     pub crafting_registry: CraftingRecipeRegistry,
     pub tag_registry: TagRegistry,
+    pub block_state_registry: BlockStateRegistry,
 }
 
 impl Registries {
@@ -172,6 +174,7 @@ impl Registries {
         let mut block_registry = BlockRegistry::new();
         let mut crafting_registry = CraftingRecipeRegistry::new();
         let mut tag_registry = TagRegistry::new();
+        let mut block_state_registry = BlockStateRegistry::new();
 
         block_registry.register_all();
         item_registry.register_all();
@@ -182,6 +185,7 @@ impl Registries {
         }
         tag_registry.register_all(&item_registry);
         crafting_registry.register_all(&item_registry, &tag_registry);
+        block_state_registry.register_all();
 
         let mut _self = Self {
             block_atlas_texture,
@@ -190,6 +194,7 @@ impl Registries {
             block_registry,
             crafting_registry,
             tag_registry,
+            block_state_registry,
         };
 
         
@@ -212,12 +217,12 @@ impl Registries {
                 },
                 ItemProperties::BasicItem(basic_item) => {
                     println!("added {} as basic item", item.id);
-                    item_atlas_registry.item_sections.insert(item.id, basic_item.section);
+                    item_atlas_registry.item_sections.insert(item.id.into(), basic_item.section);
                     continue;
                 },
                 ItemProperties::Nothing => {
                     println!("added {} as nothing", item.id);
-                    item_atlas_registry.item_sections.insert(item.id, AtlasSection { x: 0, y: 0, width: 0, height: 0 });
+                    item_atlas_registry.item_sections.insert(item.id.into(), AtlasSection { x: 0, y: 0, width: 0, height: 0 });
                     continue;
                 }
             };
@@ -235,7 +240,7 @@ impl Registries {
                 ItemProperties::BlockItem(block_item) => {
                     item_atlas_registry.block_renderer_transform_matrix.set_data(surface_ctx.queue(), ItemAtlasRegistry::viewport_subsection_matrix(fractional_section[0], fractional_section[1], fractional_section[2], fractional_section[3]).to_cols_array_2d());
                     item_atlas_registry.render_block(surface_ctx, self.block_registry.get_block(&block_item.block), &self.block_atlas_texture, &block_renderer_shader);
-                    item_atlas_registry.item_sections.insert(item.id, next_section);
+                    item_atlas_registry.item_sections.insert(item.id.into(), next_section);
                 },
                 ItemProperties::BasicItem(_) => {
                     continue;
@@ -372,4 +377,24 @@ impl TagRegistry {
     //     let entries: FxHashSet<T> = ;
     //     FxHashSet::from_iter(entries)
     // }
+}
+
+pub struct BlockStateRegistry {
+    entries: FxHashMap<BlockID, &'static dyn BlockStateProvider>
+}
+
+impl BlockStateRegistry {
+    pub fn new() -> Self {
+        Self {
+            entries: FxHashMap::default()
+        }
+    }
+
+    pub fn register(&mut self, block: BlockID, provider: &'static dyn BlockStateProvider) {
+        self.entries.insert(block, provider);
+    }
+
+    pub fn get_state_provider(&self, block: BlockID) -> Option<&'static dyn BlockStateProvider> {
+        self.entries.get(&block).cloned()
+    }
 }

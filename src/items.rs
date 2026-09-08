@@ -5,6 +5,7 @@ use bespoke_engine::resource_compiler::AtlasSection;
 use crate::{ITEM_ATLAS_PNG_CRUSHED_COPPER_ORE_SECTION, ITEM_ATLAS_PNG_STICK_SECTION, ITEM_ATLAS_PNG_STONE_AXE_SECTION, ITEM_ATLAS_PNG_STONE_HAMMER_SECTION, ITEM_ATLAS_PNG_STONE_PICKAXE_SECTION, ITEM_ATLAS_PNG_STONE_SHOVEL_SECTION, ITEM_ATLAS_PNG_WOODEN_AXE_SECTION, ITEM_ATLAS_PNG_WOODEN_PICKAXE_SECTION, ITEM_ATLAS_PNG_WOODEN_SHOVEL_SECTION, blocks::BlockID, player::{AttributeModifier, AttributeModifierCondition, EntityAttribute}, registries::ItemRegistry, tags::{AXE_BREAKABLE_TAG, PICKAXE_BREAKABLE_TAG, SHOVEL_BREAKABLE_TAG}};
 
 pub type ItemID = &'static str;
+pub type ItemIDRep = String;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Item {

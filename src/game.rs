@@ -3,11 +3,12 @@ use std::{collections::HashMap, f32::consts::PI, sync::Arc, time::{Duration, Sys
 use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::{AABB, vec3_mul_elements}, model::{Model, Render}, resource_loader::{ResourceConst, load_resource, load_resource_string}, shader::{PostProcessShaderInit, Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture, TextureLayoutConfig}, window::{BasicVertex, MULTISAMPLE_COUNT, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
 use bytemuck::{NoUninit, Pod, Zeroable, bytes_of};
 use glam::{IVec3, UVec2, Vec2, Vec3, ivec3, vec2, vec3};
+use itertools::Itertools;
 use rustc_hash::FxHashMap;
 use wgpu::{Color, CommandEncoder, Features, Limits, RenderPass, TextureFormat, wgt::CommandEncoderDescriptor};
 use wgpu_text::{BrushBuilder, TextBrush, glyph_brush::{HorizontalAlign, Layout, OwnedSection, OwnedText, VerticalAlign, ab_glyph::FontVec}};
 use winit::{dpi::PhysicalPosition, event::{KeyEvent, Modifiers, MouseButton, TouchPhase, WindowEvent}, keyboard::{KeyCode, PhysicalKey::Code}};
-use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, RES_SHADERS_BLUR_WGSL, RES_SHADERS_CHUNK_WGSL, RES_SHADERS_DEFERRED_COMBINE_WGSL, RES_SHADERS_ITEM_UI_WGSL, RES_SHADERS_POST_PROCESS_WGSL, RES_SHADERS_SSAO_WGSL, RES_SHADERS_UI_WGSL, RESOURCES, blocks::AIR, chunk::{CHUNK_SIZE, ChunkManager, NeededChunkUpdate}, const_block_models::Vertex, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, game_serializer::{GameSerializer, WorldInfo}, inventory::{Inventory, InventoryInteraction, InventoryItemStack, ItemStack, cursor_stack_interaction}, items::{self, ItemProperties}, particles::{Particle, ParticleManager, ParticleType}, player::Player, registries::Registries, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, ui::{InventoryLocation, InventoryLocationMut, InventoryModel, OpenInventory, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, inventory_location, inventory_physical_size, mouse_tile_coords, text_sections_for_inventory}, util::{self, chunk_for_block_position, chunk_for_world_position}};
+use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, RES_SHADERS_BLUR_WGSL, RES_SHADERS_CHUNK_WGSL, RES_SHADERS_DEFERRED_COMBINE_WGSL, RES_SHADERS_ITEM_UI_WGSL, RES_SHADERS_POST_PROCESS_WGSL, RES_SHADERS_SSAO_WGSL, RES_SHADERS_UI_WGSL, RESOURCES, block_states::KilnBlockState, blocks::{self, AIR}, chunk::{CHUNK_SIZE, ChunkManager, NeededChunkUpdate, index_in_chunk}, const_block_models::Vertex, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, game_serializer::{GameSerializer, WorldInfo}, inventory::{Inventory, InventoryInteraction, ItemStack, cursor_stack_interaction}, items::{self, ItemProperties}, particles::{Particle, ParticleManager, ParticleType}, player::Player, registries::Registries, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, ui::{InventoryModel, OpenInventory, OpenInventoryLocation, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, inventory_location, inventory_physical_size, mouse_tile_coords}, util::{self, chunk_for_block_position, chunk_for_world_position}};
 
 const BLUR_STEPS: i32 = 11;
 
@@ -70,10 +71,9 @@ pub struct Game<'a> {
     pub text_brush: TextBrush<FontVec>,
     pub text_sections: Vec<OwnedSection>,
     pub open_inventory: Option<OpenInventory>,
-    pub weird_player_inventory_reference: OpenInventory,
     pub open_inventory_model: Option<InventoryModel>,
     pub open_inventory_item_subsections_uniform: Option<UniformBinding<DynamicOffsetUniformVec<[f32; 4], 0>>>,
-    pub cursor_stack: InventoryItemStack,
+    pub cursor_stack: ItemStack,
     pub cursor_stack_model: Model,
     pub cursor_stack_subsection_uniform: UniformBinding<DynamicOffsetUniform<[f32; 4], 1>>,
 }
@@ -116,7 +116,7 @@ impl <'a> Game<'a> {
         let blur_kernel = UniformBinding::new(surface_ctx.device(), "Blur Kernel", generate_blur_kernel(), None);
         let ssao_blur_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_BLUR_WGSL, formats: vec![ssao_format], uniforms: vec![&intermediate_ssao_texture, &blur_radius, &blur_steps, &blur_axis, &blur_kernel], vertex_buffers: vec![BasicVertex::desc()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
         
-        let mut registries = Arc::new(Registries::new(surface_ctx));
+        let registries = Arc::new(Registries::new(surface_ctx));
         let mut game_serializer = GameSerializer::new();
 
         let world_info = game_serializer.world_info.clone().unwrap_or_else(|| {
@@ -155,7 +155,7 @@ impl <'a> Game<'a> {
         let entity_render_manager = EntityRenderManager::new(surface_ctx, deferred_formats.clone());
         
         let text_brush = BrushBuilder::using_font(FontVec::try_from_vec(load_resource("res/unifont.ttf").unwrap()).unwrap()).build(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, surface_ctx.config().format);
-        let cursor_stack = InventoryItemStack::new(ItemStack::EMPTY, &mut registries);
+        let cursor_stack = ItemStack::empty();
         let cursor_stack_model = Model::new_empty::<u16>(AABB::zero(), surface_ctx.device());
         let cursor_stack_subsection_uniform = UniformBinding::new(surface_ctx.device(), "Cursor Stack Subsection", DynamicOffsetUniform { values: [[0.0; 4]], alignment: surface_ctx.device().limits().min_uniform_buffer_offset_alignment as usize }, None);
 
@@ -178,7 +178,7 @@ impl <'a> Game<'a> {
             ssao_kernel_samples,
             random_texture,
             world_info,
-            player: Player::new(vec3(0.0, 20.0, 0.0), camera, &mut registries),
+            player: Player::new(vec3(0.0, 20.0, 0.0), camera),
             screen_size,
             mouse_coords: vec2(0.0, 0.0),
             screen_info_binding,
@@ -210,7 +210,6 @@ impl <'a> Game<'a> {
             open_inventory: None,
             open_inventory_model: None,
             open_inventory_item_subsections_uniform: None,
-            weird_player_inventory_reference: OpenInventory::PlayerInventory,
             cursor_stack,
             cursor_stack_model,
             cursor_stack_subsection_uniform,
@@ -218,14 +217,14 @@ impl <'a> Game<'a> {
 
         game_serializer.load_world(&mut _self);
 
-        if !_self.chunk_manager.get_chunk_or_create([0, -1, 0]).data.generated_blocks {
-            _self.chunk_manager.generate_blocks([0, -1, 0], [0.0; 3]);
+        if !_self.chunk_manager.get_chunk_or_create(ivec3(0, -1, 0)).data.generated_blocks {
+            _self.chunk_manager.generate_blocks(ivec3(0, -1, 0), [0.0; 3]);
         }
-        if !_self.chunk_manager.get_chunk_or_create([0; 3]).data.generated_blocks {
-            _self.chunk_manager.generate_blocks([0; 3], [0.0; 3]);
+        if !_self.chunk_manager.get_chunk_or_create(IVec3::ZERO).data.generated_blocks {
+            _self.chunk_manager.generate_blocks(IVec3::ZERO, [0.0; 3]);
         }
-        if !_self.chunk_manager.get_chunk_or_create([0, 1, 0]).data.generated_blocks {
-            _self.chunk_manager.generate_blocks([0, 1, 0], [0.0; 3]);
+        if !_self.chunk_manager.get_chunk_or_create(ivec3(0, 1, 0)).data.generated_blocks {
+            _self.chunk_manager.generate_blocks(ivec3(0, 1, 0), [0.0; 3]);
         }
 
         _self
@@ -387,7 +386,7 @@ impl <'s> WindowHandler for Game<'s> {
                 item.render(render_pass);
             }
         }
-        if self.cursor_stack.stack.count > 0 {
+        if !self.cursor_stack.is_empty() {
             self.item_ui_shader.bind(render_pass);
             render_pass.set_bind_group(0, &self.registries.item_atlas_registry.texture.binding, &[]);
             render_pass.set_bind_group(1, &self.cursor_stack_subsection_uniform.binding, &[0]);
@@ -500,17 +499,19 @@ impl <'s> Game<'s> {
             if self.mouse_down.contains(&MouseButton::Right) {
                 if self.player.break_cooldown.is_zero() || self.new_mouse_down.contains(&MouseButton::Right) {
                     if let Some((coordinate, face)) = self.player.raycast(self.player.camera.get_forward_vec(), 6.0, &self.chunk_manager, &self.registries) {
-                        if let ItemProperties::BlockItem(block_item) = self.registries.item_registry.get_item(self.player.inventory.selected_item().stack.item).properties && block_item.block != AIR {
-                            let coordinate = (IVec3::from(coordinate)+face.direction()).into();
+                        if self.chunk_manager.get_block(coordinate) == blocks::KILN {
+                            self.open_inventory(OpenInventory::KilnBlockState(coordinate, Inventory::empty_size(0)), surface_ctx);
+                        }
+                        if let ItemProperties::BlockItem(block_item) = self.registries.item_registry.get_item(&self.player.inventory.selected_item().item).properties && block_item.block != AIR {
+                            let coordinate = IVec3::from(coordinate)+face.direction();
                             let before = self.chunk_manager.get_block(coordinate);
-                            self.chunk_manager.set_block(coordinate, block_item.block, true);
+                            let before_state = self.chunk_manager.get_block_state(coordinate).cloned();
+                            let state = self.registries.block_state_registry.get_state_provider(block_item.block).map(|it| it.new_state(coordinate, &mut self.chunk_manager));
+                            self.chunk_manager.set_block(coordinate, block_item.block, state, true);
                             if self.player.colliding_world(&self.chunk_manager, &self.registries) {
-                                self.chunk_manager.set_block(coordinate, before, true);
+                                self.chunk_manager.set_block(coordinate, before, before_state, true);
                             } else {
-                                self.player.inventory.selected_item_mut().stack.count -= 1;
-                                if self.player.inventory.selected_item_mut().stack.count <= 0 {
-                                    *self.player.inventory.selected_item_mut() = InventoryItemStack::new(ItemStack::EMPTY, &self.registries);
-                                }
+                                *self.player.inventory.selected_item_mut() -= 1;
                             }
                             self.player.break_cooldown = Duration::from_secs_f32(0.2);
                         }
@@ -524,7 +525,7 @@ impl <'s> Game<'s> {
                             let before = self.chunk_manager.get_block(coordinate);
                             let before_block = self.registries.block_registry.get_block(&before);
                             if self.player.break_progress > before_block.break_duration {
-                                self.chunk_manager.set_block(coordinate, AIR, true);
+                                self.chunk_manager.set_block(coordinate, AIR, None, true);
                                 for _ in 0..10 {
                                     self.particle_manager.add_particle(Particle {
                                         particle_type: ParticleType::BlockBreak,
@@ -536,7 +537,7 @@ impl <'s> Game<'s> {
                                 }
                                 if before_block.drops != items::NOTHING {
                                     self.chunk_manager.get_chunk_or_create(chunk_for_block_position(coordinate)).add_entity(Entity {
-                                        entity_type: TypedEntity::Item { stack: InventoryItemStack::new(ItemStack::new(before_block.drops, 1), &self.registries) },
+                                        entity_type: TypedEntity::Item { stack: ItemStack::new(before_block.drops.into(), 1) },
                                         position: IVec3::from(coordinate).as_vec3()+vec3(0.5, 0.5, 0.5),
                                         velocity: (vec3(rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0), rand::random_range(-1.0..1.0))*5.0).into(),
                                         time_alive: Duration::ZERO,
@@ -593,29 +594,19 @@ impl <'s> Game<'s> {
             self.hotbar_background_ui_models = generate_hotbar_background_ui_models(surface_ctx, self.player.inventory.selected);
         }
 
+        //inventory stuff
+        if let Some(OpenInventory::KilnBlockState(world_position, open_kiln_inventory)) = &mut self.open_inventory {
+            if let Some(state_data) = self.chunk_manager.get_block_state(*world_position) && let Ok(block_state) = serde_json::from_slice::<KilnBlockState>(&state_data) {
+                *open_kiln_inventory = block_state.inventory;
+            } else {
+                self.close_inventory(surface_ctx);
+            }
+        }
         if self.new_keys_down.contains(&KeyCode::KeyE) {
             if self.open_inventory.is_some() {
-                let drop_stacks = match self.open_inventory.as_ref().unwrap() {
-                    OpenInventory::PlayerCrafting(crafting_inventory) => {
-                        &crafting_inventory.items[0..9]
-                    },
-                    OpenInventory::PlayerInventory => &[]
-                };
-                for stack in drop_stacks {
-                    self.chunk_manager.get_chunk_or_create(chunk_for_world_position(self.player.position.into())).add_entity(Entity {
-                        entity_type: TypedEntity::Item { stack: stack.clone() },
-                        position: self.player.position,
-                        velocity: vec3_mul_elements(self.player.camera.get_forward_vec(), vec3(20.0, 5.0, 20.0)),
-                        time_alive: Duration::ZERO,
-                    });
-                }
-                self.open_inventory = None;
-                self.open_inventory_model = None;
-                lock_mouse(surface_ctx);
+                self.close_inventory(surface_ctx);
             } else {
-                self.open_inventory = Some(OpenInventory::PlayerCrafting(Inventory::empty_size(10, &self.registries)));
-                self.open_inventory_model = Some(create_inventory_model(surface_ctx, self.open_inventory.as_ref().unwrap()));
-                unlock_mouse(surface_ctx);
+                self.open_inventory(OpenInventory::PlayerCrafting(Inventory::empty_size(10)), surface_ctx);
             }
         }
         let mouse_interaction = if self.new_mouse_down.contains(&MouseButton::Left) {
@@ -628,13 +619,16 @@ impl <'s> Game<'s> {
         if let Some(mouse_interaction) = mouse_interaction {
             if let Some(open_inventory) = &mut self.open_inventory {
                 if let Some(location) = mouse_tile_coords(vec2(self.mouse_coords.x/surface_ctx.config().width as f32, self.mouse_coords.y/surface_ctx.config().height as f32), surface_ctx, open_inventory) {
-                    let mut location_mut = if let OpenInventory::PlayerInventory = location.inventory {
-                        InventoryLocationMut { inventory: &mut self.weird_player_inventory_reference, x: location.x, y: location.y }
-                    } else {
-                        InventoryLocationMut { x: location.x, y: location.y, inventory: open_inventory }
-                    };
-                    Self::interact_inventory_slot(&mut location_mut, &mut self.player.inventory, &mut self.cursor_stack, mouse_interaction, &self.registries);
+                    self.interact_inventory_slot(&location, mouse_interaction);
                 }
+            }
+        }
+        if let Some(OpenInventory::KilnBlockState(world_position, open_kiln_inventory)) = &mut self.open_inventory {
+            if let Some(state_data) = self.chunk_manager.get_block_state_mut(*world_position) && let Ok(mut block_state) = serde_json::from_slice::<KilnBlockState>(&state_data) {
+                block_state.inventory = open_kiln_inventory.clone();
+                *state_data = serde_json::to_vec(&block_state).unwrap();
+            } else {
+                self.close_inventory(surface_ctx);
             }
         }
     }
@@ -657,9 +651,9 @@ impl <'s> Game<'s> {
         for cx in -1..=1 {
             for cy in -1..=1 {
                 for cz in -1..=1 {
-                    let chunk = self.chunk_manager.get_chunk_or_create([chunk_pos[0]+cx, chunk_pos[1]+cy, chunk_pos[2]+cz]);
+                    let chunk = self.chunk_manager.get_chunk_or_create(ivec3(chunk_pos[0]+cx, chunk_pos[1]+cy, chunk_pos[2]+cz));
                     let mut empty_list = vec![];
-                    let item_entities = chunk.entities.get_mut(&EntityType::Item).unwrap_or(&mut empty_list);
+                    let item_entities = chunk.data.entities.get_mut(&EntityType::Item).unwrap_or(&mut empty_list);
                     let mut i = 0;
                     while i < item_entities.len() {
                         let entity = &item_entities[i];
@@ -680,22 +674,36 @@ impl <'s> Game<'s> {
         let mut move_entities = vec![];
         let mut needed_chunk_updates = FxHashMap::default();
         for pos in self.chunk_manager.chunk_positions_owned() {
-            for entity_type in self.chunk_manager.get_chunk_or_create(pos).entities.keys().cloned().collect::<Vec<EntityType>>() {
+            for entity_type in self.chunk_manager.get_chunk_or_create(pos).data.entities.keys().cloned().collect::<Vec<EntityType>>() {
                 let mut i = 0;
-                let mut len = self.chunk_manager.get_chunk_or_create(pos).entities.get(&entity_type).unwrap().len();
+                let mut len = self.chunk_manager.get_chunk_or_create(pos).data.entities.get(&entity_type).unwrap().len();
                 let mut temp_entity = Entity { position: vec3(0.0, 0.0, 0.0), velocity: vec3(0.0, 0.0, 0.0), entity_type: TypedEntity::Marker, time_alive: Duration::ZERO };
                 while i < len {
-                    std::mem::swap(&mut self.chunk_manager.get_chunk_or_create(pos).entities.get_mut(&entity_type).unwrap()[i], &mut temp_entity);
+                    std::mem::swap(&mut self.chunk_manager.get_chunk_or_create(pos).data.entities.get_mut(&entity_type).unwrap()[i], &mut temp_entity);
                     temp_entity.update(&self.chunk_manager, delta, &self.registries);
-                    std::mem::swap(&mut self.chunk_manager.get_chunk_or_create(pos).entities.get_mut(&entity_type).unwrap()[i], &mut temp_entity);
-                    if chunk_for_world_position(self.chunk_manager.get_chunk_or_create(pos).entities.get_mut(&entity_type).unwrap()[i].position.into()) != pos {
-                        move_entities.push(self.chunk_manager.get_chunk_or_create(pos).entities.get_mut(&entity_type).unwrap().remove(i));
+                    std::mem::swap(&mut self.chunk_manager.get_chunk_or_create(pos).data.entities.get_mut(&entity_type).unwrap()[i], &mut temp_entity);
+                    if chunk_for_world_position(self.chunk_manager.get_chunk_or_create(pos).data.entities.get_mut(&entity_type).unwrap()[i].position.into()) != pos {
+                        move_entities.push(self.chunk_manager.get_chunk_or_create(pos).data.entities.get_mut(&entity_type).unwrap().remove(i));
                     } else {
                         i += 1;
                     }
-                    len = self.chunk_manager.get_chunk_or_create(pos).entities.get(&entity_type).unwrap().len();
+                    len = self.chunk_manager.get_chunk_or_create(pos).data.entities.get(&entity_type).unwrap().len();
                 }
             }
+            for state_position in self.chunk_manager.get_chunk_or_create(pos).data.block_data.keys().cloned().collect_vec() {
+                let mut state_data = self.chunk_manager.get_chunk_or_create(pos).data.block_data.get(&state_position).unwrap().clone();
+                let block = self.chunk_manager.get_chunk_or_create(pos).data.blocks[index_in_chunk(state_position.x, state_position.y, state_position.z)];
+                let world_pos = state_position.as_ivec3()+pos*CHUNK_SIZE as i32;
+                if let Some(provider) = self.registries.block_state_registry.get_state_provider(block) {
+                    provider.update(&mut state_data, world_pos, &mut self.chunk_manager, delta);
+                } else {
+                    println!("no provider for state at pos: {world_pos:?}");
+                }
+                if let Some(block_state) = self.chunk_manager.get_chunk_or_create(pos).data.block_data.get_mut(&state_position) {
+                    *block_state = state_data;
+                }
+            }
+            
             let chunk = self.chunk_manager.get_chunk_or_create(pos);
             let mut this_chunk_updates = vec![];
             std::mem::swap(&mut this_chunk_updates, &mut chunk.needed_chunk_updates);
@@ -728,7 +736,7 @@ impl <'s> Game<'s> {
             if self.chunk_manager.pending_requests > 5 {
                 break;
             }
-            let relative_pos = [chunk_pos[0] + (self.player.camera.eye.x / CHUNK_SIZE as f32).floor() as i32, chunk_pos[1] + (self.player.camera.eye.y / CHUNK_SIZE as f32).floor() as i32, chunk_pos[2] + (self.player.camera.eye.z / CHUNK_SIZE as f32).floor() as i32];
+            let relative_pos = ivec3(chunk_pos[0] + (self.player.camera.eye.x / CHUNK_SIZE as f32).floor() as i32, chunk_pos[1] + (self.player.camera.eye.y / CHUNK_SIZE as f32).floor() as i32, chunk_pos[2] + (self.player.camera.eye.z / CHUNK_SIZE as f32).floor() as i32);
             if !self.chunk_manager.chunk_loaded(relative_pos) {
                 self.chunk_manager.get_chunk_or_create(relative_pos);
                 self.chunk_manager.generate_blocks(relative_pos, self.player.position.into());
@@ -753,7 +761,7 @@ impl <'s> Game<'s> {
             self.cube_outline_model = None;
         }
         let hotbar_atlas_subsections = self.player.inventory.items[0..9].iter().map(|item| {
-            self.registries.item_atlas_registry.fractional_atlas_section(&item.atlas_section)
+            self.registries.item_atlas_registry.fractional_atlas_section(&self.registries.item_atlas_registry.get_item(&item.item))
         }).collect::<Vec<[f32; 4]>>().try_into().unwrap();
         self.hotbar_atlas_subsections_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: hotbar_atlas_subsections, alignment: self.hotbar_atlas_subsections_uniform.value.alignment });
         if let Some(open_inventory) = &mut self.open_inventory {
@@ -762,8 +770,8 @@ impl <'s> Game<'s> {
             for physical_y in 0..num_physical_rows {
                 for physical_x in 0..num_physical_cols {
                     if let Some(location) = inventory_location(open_inventory, physical_x, physical_y) {
-                        if let Some(stack) = Self::stack_at_location(&location, &self.player.inventory) {
-                            values.push(self.registries.item_atlas_registry.fractional_atlas_section(&stack.atlas_section));
+                        if let Some(stack) = Self::stack_at_location(&location, open_inventory, &self.player.inventory) {
+                            values.push(self.registries.item_atlas_registry.fractional_atlas_section(&self.registries.item_atlas_registry.get_item(&stack.item)));
                         } else {
                             println!("got location {location:?} but no stack is associated");
                         }
@@ -776,16 +784,16 @@ impl <'s> Game<'s> {
             } else {
                 self.open_inventory_item_subsections_uniform.as_mut().unwrap().set_data(surface_ctx.queue(), value);
             }
-            self.text_sections.extend_from_slice(&text_sections_for_inventory(surface_ctx, &|location| { 
-                Self::stack_at_location(&location, &self.player.inventory).map(|it| it.stack.count)
-             }, open_inventory));
+            self.text_sections.extend_from_slice(&self.text_sections_for_inventory(surface_ctx, &|location| { 
+                Self::stack_at_location(&location, self.open_inventory.as_ref().unwrap(), &self.player.inventory).map(|it| it.count)
+             }));
         }
 
         let screen_aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
         let hotbar_item_text_sections = self.player.inventory.items[0..9].iter().enumerate().flat_map(|(i, item)| {
-            if item.stack.count > 1 {
+            if item.count > 1 {
                 Some(OwnedSection::default()
-                    .add_text(OwnedText::new(format!("{}", item.stack.count))
+                    .add_text(OwnedText::new(format!("{}", item.count))
                     .with_scale(surface_ctx.config().height as f32 * hotbar_item_height()/4.0)
                     .with_color([1.0; 4]))
                     .with_bounds((surface_ctx.config().width as f32 * hotbar_item_height()/screen_aspect_ratio, surface_ctx.config().height as f32 * hotbar_item_height()))
@@ -809,11 +817,11 @@ impl <'s> Game<'s> {
             UIVertex { position: [cursor_screen_position.x+cursor_stack_width, cursor_screen_position.y-cursor_stack_height, 0.0], tex_coords: [1.0, 1.0], repeat_count: [1.0, 1.0] },
             UIVertex { position: [cursor_screen_position.x+cursor_stack_width, cursor_screen_position.y, 0.0], tex_coords: [1.0, 0.0], repeat_count: [1.0, 1.0] },
         ], &[0_u16, 2, 1, 2, 3, 1], AABB::zero(), surface_ctx.device());
-        self.cursor_stack_subsection_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: [self.registries.item_atlas_registry.fractional_atlas_section(&self.cursor_stack.atlas_section)], alignment: self.cursor_stack_subsection_uniform.value.alignment });
-        if self.cursor_stack.stack.count > 1 {
+        self.cursor_stack_subsection_uniform.set_data(surface_ctx.queue(), DynamicOffsetUniform { values: [self.registries.item_atlas_registry.fractional_atlas_section(&self.registries.item_atlas_registry.get_item(&self.cursor_stack.item))], alignment: self.cursor_stack_subsection_uniform.value.alignment });
+        if self.cursor_stack.count > 1 {
             self.text_sections.push(OwnedSection::default()
                 .add_text(
-                    OwnedText::new(format!("{}", self.cursor_stack.stack.count))
+                    OwnedText::new(format!("{}", self.cursor_stack.count))
                     .with_scale(surface_ctx.config().height as f32 * cursor_stack_height/4.0)
                     .with_color([0.0, 0.0, 0.0, 1.0]))
                 .with_bounds((cursor_stack_width * surface_ctx.config().width as f32, cursor_stack_height * surface_ctx.config().height as f32))
@@ -962,9 +970,13 @@ impl <'s> Game<'s> {
         surface_ctx.screen_model().render(&mut render_pass);
     }
 
-    fn stack_index_at_location<'a>(location: &'a InventoryLocation<'a>) -> Option<usize> {
-        match location.inventory {
-            OpenInventory::PlayerCrafting(_) =>  {
+    fn stack_index_at_location(location: &OpenInventoryLocation, open_inventory: &OpenInventory) -> Option<usize> {
+        if location.player {
+            let i = location.y * 9 + location.x;
+            return Some(i as usize);
+        }
+        match &open_inventory {
+            OpenInventory::PlayerCrafting(_) => {
                 if (0..3).contains(&location.y) && (0..3).contains(&location.x) {
                     let i = location.y * 3 + location.x;
                     Some(i as usize)
@@ -974,58 +986,88 @@ impl <'s> Game<'s> {
                     None
                 }
             },
-            OpenInventory::PlayerInventory => {
-                let i = location.y * 9 + location.x;
-                Some(i as usize)
+            OpenInventory::KilnBlockState(_, _) => {
+                if location.x == 0 && location.y == 0 {
+                    Some(0)
+                } else if location.x == 1 && location.y == 0 {
+                    Some(1)
+                } else {
+                    None
+                }
             }
+            // OpenInventory::PlayerInventory => {
+            //     let i = location.y * 9 + location.x;
+            //     Some(i as usize)
+            // }
         }
     }
 
-    fn stack_at_location<'a>(location: &'a InventoryLocation<'a>, player_inventory: &'a Inventory) -> Option<&'a InventoryItemStack> {
-        if let Some(index) = Self::stack_index_at_location(location) {
-            if location.inventory == &OpenInventory::PlayerInventory {
+    fn open_inventory(&mut self, open_inventory: OpenInventory, surface_ctx: &dyn SurfaceCtx) {
+        self.open_inventory = Some(open_inventory);
+        self.open_inventory_model = Some(create_inventory_model(surface_ctx, self.open_inventory.as_ref().unwrap()));
+        unlock_mouse(surface_ctx);
+    }
+
+    fn close_inventory(&mut self, surface_ctx: &dyn SurfaceCtx) {
+        let drop_stacks = match self.open_inventory.as_ref().unwrap() {
+            OpenInventory::PlayerCrafting(crafting_inventory) => {
+                &crafting_inventory.items[0..9]
+            },
+            OpenInventory::KilnBlockState(_, _) => &[]
+        };
+        for stack in drop_stacks {
+            self.chunk_manager.get_chunk_or_create(chunk_for_world_position(self.player.position.into())).add_entity(Entity {
+                entity_type: TypedEntity::Item { stack: stack.clone() },
+                position: self.player.position,
+                velocity: vec3_mul_elements(self.player.camera.get_forward_vec(), vec3(20.0, 5.0, 20.0)),
+                time_alive: Duration::ZERO,
+            });
+        }
+
+        self.open_inventory = None;
+        self.open_inventory_model = None;
+        lock_mouse(surface_ctx);
+    }
+
+    fn stack_at_location<'a>(location: &OpenInventoryLocation, open_inventory: &'a OpenInventory, player_inventory: &'a Inventory) -> Option<&'a ItemStack> {
+        if let Some(index) = Self::stack_index_at_location(location, open_inventory) {
+            if location.player {
                 return Some(&player_inventory.items[index])
             } else {
-                return Some(Self::stack_at_index(index, location.inventory, player_inventory))
+                return Some(open_inventory.stack_at_index(index))
             }
         } else {
             return None
         }
     }
 
-    fn stack_at_index<'a>(index: usize, inventory: &'a OpenInventory, player_inventory: &'a Inventory) -> &'a InventoryItemStack {
-        match inventory {
-            OpenInventory::PlayerInventory => &player_inventory.items[index],
-            OpenInventory::PlayerCrafting(inventory) => &inventory.items[index],
-        }
-    }
-
-    fn stack_at_index_mut<'a>(index: usize, inventory: &'a mut OpenInventory, player_inventory: &'a mut Inventory) -> &'a mut InventoryItemStack {
-        match inventory {
-            OpenInventory::PlayerInventory => &mut player_inventory.items[index],
-            OpenInventory::PlayerCrafting(inventory) => &mut inventory.items[index],
-        }
-    }
-
-    fn interact_inventory_slot<'a>(location: &'a mut InventoryLocationMut<'a>, player_inventory: &'a mut Inventory, cursor_stack: &mut InventoryItemStack, interaction: InventoryInteraction, registries: &Registries) {
-        match location.inventory {
-            OpenInventory::PlayerInventory => {
-                if let Some(i) = Self::stack_index_at_location(&location.as_ref()) {
-                    cursor_stack_interaction(cursor_stack, &mut player_inventory.items[i], interaction, registries);
-                }
-            },
-            OpenInventory::PlayerCrafting(crafting_inventory) => {
-                if location.x == 4 && location.y == 1 {
-                    crafting_inventory.take_crafting_result(cursor_stack, registries);
-                    crafting_inventory.calculate_crafting_result(registries);
-                }
-                if (0..3).contains(&location.x) && (0..3).contains(&location.y) {
-                    if let Some(i) = Self::stack_index_at_location(&location.as_ref()) {
-                        let stack = Self::stack_at_index_mut(i, location.inventory, player_inventory);
-                        cursor_stack_interaction(cursor_stack, stack, interaction, registries);
-                        if let Some(inventory) = location.inner_inventory() {
-                            inventory.calculate_crafting_result(registries);
+    fn interact_inventory_slot<'a>(&mut self, location: &OpenInventoryLocation, interaction: InventoryInteraction) {
+        if location.player {
+            if let Some(i) = Self::stack_index_at_location(location, self.open_inventory.as_ref().unwrap()) {
+                cursor_stack_interaction(&mut self.cursor_stack, &mut self.player.inventory.items[i], false, interaction);
+            }
+        } else if let Some(open_inventory) = &mut self.open_inventory {
+            match open_inventory {
+                OpenInventory::PlayerCrafting(crafting_inventory) => {
+                    if location.x == 4 && location.y == 1 {
+                        crafting_inventory.take_crafting_result(&mut self.cursor_stack, &self.registries);
+                        crafting_inventory.calculate_crafting_result(&self.registries);
+                    }
+                    if (0..3).contains(&location.x) && (0..3).contains(&location.y) {
+                        if let Some(i) = Self::stack_index_at_location(&location, open_inventory) {
+                            let stack = self.open_inventory.as_mut().unwrap().stack_at_index_mut(i);
+                            cursor_stack_interaction(&mut self.cursor_stack, stack, false, interaction);
+                            if let Some(OpenInventory::PlayerCrafting(crafting_inventory)) = &mut self.open_inventory {
+                                crafting_inventory.calculate_crafting_result(&self.registries);
+                            }
                         }
+                    }
+                },
+                OpenInventory::KilnBlockState(_, kiln_inventory) => {
+                    if location.x == 0 && location.y == 0 {
+                        cursor_stack_interaction(&mut self.cursor_stack, &mut kiln_inventory.items[0], false, interaction);
+                    } else if location.x == 1 && location.y == 0 {
+                        cursor_stack_interaction(&mut self.cursor_stack, &mut kiln_inventory.items[1], true, interaction);
                     }
                 }
             }

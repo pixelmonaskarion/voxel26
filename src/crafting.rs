@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_inline_default::serde_inline_default;
 
-use crate::{inventory::ItemStack, items::ItemID, registries::{ItemRegistry, Registries, TagID, TagRegistry}};
+use crate::{inventory::ItemStack, items::ItemIDRep, registries::{ItemRegistry, Registries, TagID, TagRegistry}};
 
 #[derive(Serialize, Deserialize)]
 pub struct CraftingRecipeJson {
@@ -17,12 +17,6 @@ pub struct CraftingRecipeJson {
 pub enum CraftingRecipeJsonSubstitution {
     ItemID(String),
     CraftingItemStack(CraftingItemStackJson),
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct ItemStackData {
-    pub id: String,
-    pub count: i32,
 }
 
 #[serde_inline_default]
@@ -44,14 +38,14 @@ pub enum CraftingIngredient {
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum CraftingIngredientID {
-    ItemID(ItemID),
+    ItemID(ItemIDRep),
     TagID(TagID),
 }
 
 impl CraftingIngredient {
     pub fn id(&self) -> CraftingIngredientID {
         match self {
-            CraftingIngredient::ItemStack(stack) => CraftingIngredientID::ItemID(stack.item),
+            CraftingIngredient::ItemStack(stack) => CraftingIngredientID::ItemID(stack.item.clone()),
             CraftingIngredient::TagStack { tag, .. } => CraftingIngredientID::TagID(tag),
         }
     }
@@ -76,7 +70,7 @@ impl CraftingRecipe {
             if id.starts_with("#") {
                 CraftingIngredient::TagStack { tag: tag_registry.get_item_tag(&id[1..]).id, count }
             } else {
-                CraftingIngredient::ItemStack(ItemStack::new(item_registry.get_item(id).id, count))
+                CraftingIngredient::ItemStack(ItemStack::new(item_registry.get_item(id).id.into(), count))
             }
         };
         let get_substitution = |char| {
@@ -104,7 +98,7 @@ impl CraftingRecipe {
                 let stack = &pattern[x][y];
                 if !match self_ingredient {
                     CraftingIngredient::ItemStack(self_stack) => self_stack.item == stack.item,
-                    CraftingIngredient::TagStack { tag, .. } => registries.tag_registry.get_item_tag(*tag).entries.contains(stack.item),
+                    CraftingIngredient::TagStack { tag, .. } => registries.tag_registry.get_item_tag(*tag).entries.iter().any(|it| it == &stack.item),
                 } {
                     return false;
                 }

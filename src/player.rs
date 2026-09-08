@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 
 use crate::{blocks::Block, chunk::ChunkManager, inventory::Inventory, registries::{Registries, TagID}};
 
+#[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct Player {
     pub camera: Camera,
     pub position: Vec3,
@@ -23,7 +24,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(position: Vec3, camera: Camera, registries: &Registries) -> Self {
+    pub fn new(position: Vec3, camera: Camera) -> Self {
         let mut _self = Self {
             camera,
             position,
@@ -33,7 +34,7 @@ impl Player {
             break_cooldown: Duration::ZERO,
             break_progress: Duration::ZERO,
             break_position: None,
-            inventory: Inventory::empty_size(4*9, registries),
+            inventory: Inventory::empty_size(4*9),
             health: 20.0,
             attributes: FxHashMap::from_iter([(EntityAttribute::BlockBreakSpeed, 1.0)])
         };
@@ -76,7 +77,7 @@ impl Player {
 
     pub fn block_break_modifier(&mut self, target: Block, registries: &Registries) -> f32 {
         let mut attribute = *self.attributes.get(&EntityAttribute::BlockBreakSpeed).unwrap_or(&1.0);
-        let conditional_modifier = registries.item_registry.get_item(self.inventory.selected_item().stack.item).attribute_modifiers.get(&EntityAttribute::BlockBreakSpeed).cloned().unwrap_or_default();
+        let conditional_modifier = registries.item_registry.get_item(&self.inventory.selected_item().item).attribute_modifiers.get(&EntityAttribute::BlockBreakSpeed).cloned().unwrap_or_default();
         if match conditional_modifier.condition {
             AttributeModifierCondition::Always => true,
             AttributeModifierCondition::TargetInTag(tag_id) => registries.tag_registry.get_block_tag(tag_id).entries.contains(&target.id),
@@ -128,12 +129,12 @@ impl Player {
         return false;
     }
 
-    pub fn raycast(&self, direction: Vec3, max_distance: f32, world: &ChunkManager, registries: &Registries) -> Option<([i32;3], BlockFace)> {
+    pub fn raycast(&self, direction: Vec3, max_distance: f32, world: &ChunkManager, registries: &Registries) -> Option<(IVec3, BlockFace)> {
         if direction.length_squared() == 0.0 {
             return None;
         }
         let dir = direction.normalize();
-        let mut voxel: [i32; 3] = self.position.floor().as_ivec3().into();
+        let mut voxel: IVec3 = self.position.floor().as_ivec3().into();
 
         let step_x = if dir.x > 0.0 { 1 } else if dir.x < 0.0 { -1 } else { 0 };
         let step_y = if dir.y > 0.0 { 1 } else if dir.y < 0.0 { -1 } else { 0 };

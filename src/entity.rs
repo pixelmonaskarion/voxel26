@@ -5,7 +5,7 @@ use bytemuck::bytes_of;
 use glam::{Vec3, vec3};
 use wgpu::{Buffer, BufferUsages, TextureFormat, wgt::BufferDescriptor};
 
-use crate::{RES_SHADERS_ITEM_ENTITY_WGSL, chunk::ChunkManager, game::ScreenInfo, inventory::InventoryItemStack, registries::{ItemAtlasRegistry, Registries}, util};
+use crate::{RES_SHADERS_ITEM_ENTITY_WGSL, chunk::ChunkManager, game::ScreenInfo, inventory::ItemStack, registries::{ItemAtlasRegistry, Registries}, util};
 
 #[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct Entity {
@@ -17,6 +17,10 @@ pub struct Entity {
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
 #[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+#[rkyv(
+    compare(PartialEq),
+    derive(Hash, PartialEq, Eq),
+)]
 pub enum EntityType {
     Item,
     Marker,
@@ -70,7 +74,7 @@ impl Entity {
     pub fn shader_instance(&self, item_atlas: &ItemAtlasRegistry) -> Option<Vec<u8>> {
         match &self.entity_type {
             TypedEntity::Item { stack } => {
-                let atlas_subsection = item_atlas.fractional_atlas_section(&stack.atlas_section);
+                let atlas_subsection = item_atlas.fractional_atlas_section(&item_atlas.get_item(&stack.item));
                 Some(ItemInstance { position: (self.position+vec3(0.0, (self.time_alive.as_secs_f32().sin()+1.0)*0.05, 0.0)).extend(1.0).into(), texture_offsets: [0.0; 4], atlas_subsection }.to_raw())
             },
             TypedEntity::Marker => {
@@ -83,7 +87,7 @@ impl Entity {
 #[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub enum TypedEntity {
     Item {
-        stack: InventoryItemStack,
+        stack: ItemStack,
     },
     Marker
 }

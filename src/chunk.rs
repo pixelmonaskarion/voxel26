@@ -1,9 +1,10 @@
 use std::{collections::HashMap, hash::{DefaultHasher, Hash, Hasher}, ops::{AddAssign, Mul}, sync::{Arc, mpsc}, time::{Duration, SystemTime}};
 
 use bespoke_engine::{model::Render, shader::Shader, surface_context::SurfaceCtx};
-use glam::{DVec2, IVec3, Vec3, dvec2, ivec3};
+use glam::{DVec2, IVec3, UVec3, Vec3, dvec2, ivec3, uvec3};
 use noise::{NoiseFn, Perlin};
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use rustc_hash::FxHashMap;
 use serde_inline_default::serde_inline_default;
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, RenderPass};
 use itertools::Itertools;
@@ -30,7 +31,9 @@ pub struct Chunk {
 pub struct ChunkData {
     pub blocks: Vec<BlockID>,
     pub generated_blocks: bool,
-    pub entities: HashMap<EntityType, Vec<Entity>>,
+    pub entities: FxHashMap<EntityType, Vec<Entity>>,
+    pub block_data: FxHashMap<UVec3, Vec<u8>>,
+    pub chunk_coords: IVec3,
 }
 
 pub struct ChunkModel {
@@ -59,23 +62,30 @@ pub fn index_in_chunk(x: u32, y: u32, z: u32) -> usize {
 
 #[allow(unused)]
 impl Chunk {
-    pub fn new() -> Self {
+    pub fn new(chunk_coords: IVec3) -> Self {
         let mut _self = Self {
             data: ChunkData {
                 blocks: vec![0; (CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) as usize],
                 generated_blocks: false,
+                entities: FxHashMap::default(),
+                block_data: FxHashMap::default(),
+                chunk_coords,
             },
             creating_model: false,
             model: None,
-            entities: HashMap::new(),
             needed_chunk_updates: vec![],
             lod: 0,
         };
         _self
     }
 
-    pub fn set_block(&mut self, local_coords: [u32; 3], block: BlockID, update_synchronously: bool) {
-        self.data.blocks[index_in_chunk(local_coords[0], local_coords[1], local_coords[2])] = block;
+    pub fn set_block(&mut self, local_coords: UVec3, block: BlockID, state: Option<Vec<u8>>, update_synchronously: bool) {
+        self.data.blocks[index_in_chunk(local_coords.x, local_coords.y, local_coords.z)] = block;
+        if let Some(state) = state {
+            self.data.block_data.insert(local_coords, state);
+        } else {
+            self.data.block_data.remove(&local_coords);
+        }
         self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, 0, 0), synchronous: update_synchronously });
         if local_coords[0] == 0 {
             self.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(-1, 0, 0), synchronous: update_synchronously });
@@ -111,7 +121,7 @@ impl Chunk {
                 render_pass.set_index_buffer(model.buffer.slice(((model.num_vertices+model.num_transparent_vertices+model.num_modeled_vertices)*size_of::<Vertex>()+model.num_indices*size_of::<u32>()) as u64..((model.num_vertices+model.num_transparent_vertices+model.num_modeled_vertices)*size_of::<Vertex>()+(model.num_indices.max(model.num_transparent_indices)+model.num_modeled_indices)*size_of::<u32>()) as u64), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..model.num_modeled_indices as u32, 0, 0..1);
             }
-            for (entity_type, entities) in &self.entities {
+            for (entity_type, entities) in &self.data.entities {
                 if entities.len() == 0 {
                     continue;
                 }
@@ -154,25 +164,25 @@ impl Chunk {
 
     pub fn add_entity(&mut self, entity: Entity) {
         let id = entity.id();
-        if !self.entities.contains_key(&id) {
-            self.entities.insert(id, vec![]);
+        if !self.data.entities.contains_key(&id) {
+            self.data.entities.insert(id, vec![]);
         }
-        self.entities.get_mut(&id).unwrap().push(entity);
+        self.data.entities.get_mut(&id).unwrap().push(entity);
     }
 }
 
 struct GenerateChunkBlocksRequest {
-    chunk_position: [i32; 3],
+    chunk_position: IVec3,
     player_position: [f32; 3],
 }
 
 struct GenerateChunkBlocksResponse {
-    chunk_position: [i32; 3],
+    chunk_position: IVec3,
     chunk_blocks: Vec<BlockID>,
 }
 
 struct GenerateChunkMeshRequest {
-    chunk_position: [i32; 3],
+    chunk_position: IVec3,
     player_position: [f32; 3],
     chunk_blocks: Vec<BlockID>,
     cpx: Option<Vec<BlockID>>,
@@ -184,7 +194,7 @@ struct GenerateChunkMeshRequest {
 }
 
 struct GenerateChunkModelResponse {
-    chunk_position: [i32; 3],
+    chunk_position: IVec3,
     chunk_model: Option<ChunkModel>,
     lod: i32,
 }
@@ -291,7 +301,7 @@ impl ChunkManager {
                 chunk.data.blocks = res.chunk_blocks;
                 chunk.data.generated_blocks = true;
                 chunk.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, 0, 0), synchronous: false });
-                chunk.needed_chunk_updates.extend(neighbors([0; 3]).into_iter().map(|it| NeededChunkUpdate { relative_chunk_pos: it.into(), synchronous: false }));
+                chunk.needed_chunk_updates.extend(neighbors(IVec3::ZERO).into_iter().map(|it| NeededChunkUpdate { relative_chunk_pos: it.into(), synchronous: false }));
             }
         }
         while let Ok(res) = self.gen_model_rx.try_recv() {
@@ -305,7 +315,7 @@ impl ChunkManager {
         }
     }
 
-    pub fn generate_blocks(&mut self, chunk_position: [i32; 3], player_position: [f32; 3]) {
+    pub fn generate_blocks(&mut self, chunk_position: IVec3, player_position: [f32; 3]) {
         self.pending_requests += 1;
         self.gen_blocks_tx.send(GenerateChunkBlocksRequest {
             chunk_position,
@@ -313,7 +323,7 @@ impl ChunkManager {
         }).unwrap();
     }
 
-    pub fn generate_model(&mut self, chunk_position: [i32; 3], player_position: [f32; 3]) {
+    pub fn generate_model(&mut self, chunk_position: IVec3, player_position: [f32; 3]) {
         if let Some(chunk) = self.chunks.get_mut(chunk_position) {
             self.pending_requests += 1;
             chunk.creating_model = true;
@@ -321,43 +331,43 @@ impl ChunkManager {
                 chunk_position,
                 player_position,
                 chunk_blocks: chunk.data.blocks.clone(),
-                cpx: self.chunks.get([chunk_position[0]+1, chunk_position[1], chunk_position[2]]).map(|it| it.data.blocks.clone()),
-                cnx: self.chunks.get([chunk_position[0]-1, chunk_position[1], chunk_position[2]]).map(|it| it.data.blocks.clone()),
-                cpy: self.chunks.get([chunk_position[0], chunk_position[1]+1, chunk_position[2]]).map(|it| it.data.blocks.clone()),
-                cny: self.chunks.get([chunk_position[0], chunk_position[1]-1, chunk_position[2]]).map(|it| it.data.blocks.clone()),
-                cpz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]+1]).map(|it| it.data.blocks.clone()),
-                cnz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]-1]).map(|it| it.data.blocks.clone()),
+                cpx: self.chunks.get(ivec3(chunk_position[0]+1, chunk_position[1], chunk_position[2])).map(|it| it.data.blocks.clone()),
+                cnx: self.chunks.get(ivec3(chunk_position[0]-1, chunk_position[1], chunk_position[2])).map(|it| it.data.blocks.clone()),
+                cpy: self.chunks.get(ivec3(chunk_position[0], chunk_position[1]+1, chunk_position[2])).map(|it| it.data.blocks.clone()),
+                cny: self.chunks.get(ivec3(chunk_position[0], chunk_position[1]-1, chunk_position[2])).map(|it| it.data.blocks.clone()),
+                cpz: self.chunks.get(ivec3(chunk_position[0], chunk_position[1], chunk_position[2]+1)).map(|it| it.data.blocks.clone()),
+                cnz: self.chunks.get(ivec3(chunk_position[0], chunk_position[1], chunk_position[2]-1)).map(|it| it.data.blocks.clone()),
             }).unwrap();
         }
     }
 
-    pub fn generate_model_and_surroundings(&mut self, chunk_position: [i32; 3], player_position: [f32; 3]) {
+    pub fn generate_model_and_surroundings(&mut self, chunk_position: IVec3, player_position: [f32; 3]) {
         self.generate_model(chunk_position, player_position);
         for position in neighbors(chunk_position) {
             self.generate_model(position, player_position);
         }
     }
 
-    pub fn generate_model_and_surroundings_now(&mut self, chunk_position: [i32; 3], player_position: [f32; 3], registries: &Registries, surface_ctx: &dyn SurfaceCtx) {
+    pub fn generate_model_and_surroundings_now(&mut self, chunk_position: IVec3, player_position: [f32; 3], registries: &Registries, surface_ctx: &dyn SurfaceCtx) {
         self.generate_model_now(chunk_position, player_position, registries, surface_ctx);
         for position in neighbors(chunk_position) {
             self.generate_model_now(position, player_position, registries, surface_ctx);
         }
     }
 
-    pub fn generate_model_now(&mut self, chunk_position: [i32; 3], player_position: [f32; 3], registries: &Registries, surface_ctx: &dyn SurfaceCtx) {
+    pub fn generate_model_now(&mut self, chunk_position: IVec3, player_position: [f32; 3], registries: &Registries, surface_ctx: &dyn SurfaceCtx) {
         let time = SystemTime::now();
         if let Some(chunk_blocks) = self.chunks.get(chunk_position).map(|it| it.data.blocks.clone()) {
             let req = GenerateChunkMeshRequest {
                 chunk_position,
                 player_position,
                 chunk_blocks,
-                cpx: self.chunks.get([chunk_position[0]+1, chunk_position[1], chunk_position[2]]).map(|it| it.data.blocks.clone()),
-                cnx: self.chunks.get([chunk_position[0]-1, chunk_position[1], chunk_position[2]]).map(|it| it.data.blocks.clone()),
-                cpy: self.chunks.get([chunk_position[0], chunk_position[1]+1, chunk_position[2]]).map(|it| it.data.blocks.clone()),
-                cny: self.chunks.get([chunk_position[0], chunk_position[1]-1, chunk_position[2]]).map(|it| it.data.blocks.clone()),
-                cpz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]+1]).map(|it| it.data.blocks.clone()),
-                cnz: self.chunks.get([chunk_position[0], chunk_position[1], chunk_position[2]-1]).map(|it| it.data.blocks.clone()),
+                cpx: self.chunks.get(ivec3(chunk_position[0]+1, chunk_position[1], chunk_position[2])).map(|it| it.data.blocks.clone()),
+                cnx: self.chunks.get(ivec3(chunk_position[0]-1, chunk_position[1], chunk_position[2])).map(|it| it.data.blocks.clone()),
+                cpy: self.chunks.get(ivec3(chunk_position[0], chunk_position[1]+1, chunk_position[2])).map(|it| it.data.blocks.clone()),
+                cny: self.chunks.get(ivec3(chunk_position[0], chunk_position[1]-1, chunk_position[2])).map(|it| it.data.blocks.clone()),
+                cpz: self.chunks.get(ivec3(chunk_position[0], chunk_position[1], chunk_position[2]+1)).map(|it| it.data.blocks.clone()),
+                cnz: self.chunks.get(ivec3(chunk_position[0], chunk_position[1], chunk_position[2]-1)).map(|it| it.data.blocks.clone()),
             };
             let res = Self::generate_mesh_req(req, surface_ctx.device(), registries);
             self.chunks.get_mut(chunk_position).unwrap().model = res.chunk_model;
@@ -593,7 +603,7 @@ impl ChunkManager {
             }
         }
         #[inline(always)]
-        fn add_modeled_block(block: Block, model: &dyn BlockModelTrait, position: [i32; 3], chunk_position: [i32; 3], modeled_vertices: &mut Vec<Vertex>, modeled_indices: &mut Vec<u32>, model_cache: &mut HashMap<BlockID, BlockModel>) {
+        fn add_modeled_block(block: Block, model: &dyn BlockModelTrait, position: [i32; 3], chunk_position: IVec3, modeled_vertices: &mut Vec<Vertex>, modeled_indices: &mut Vec<u32>, model_cache: &mut HashMap<BlockID, BlockModel>) {
             let chunk_x_f32 = chunk_position[0] as f32 * CHUNK_SIZE as f32;
             let chunk_y_f32 = chunk_position[1] as f32 * CHUNK_SIZE as f32;
             let chunk_z_f32 = chunk_position[2] as f32 * CHUNK_SIZE as f32;
@@ -653,7 +663,7 @@ impl ChunkManager {
                         x: i32, y: i32, w: i32, h: i32, block: Block,
                         vertices: &mut Vec<Vertex>, transparency_vertices: &mut Vec<Vertex>,
                         direction: i32, dim: usize, slice: i32,
-                        chunk_position: [i32; 3],
+                        chunk_position: IVec3,
                     ) {
                         let layer = block.layer;
 
@@ -933,17 +943,17 @@ impl ChunkManager {
         }
     }
 
-    pub fn get_chunk_or_create(&mut self, chunk_position: [i32; 3]) -> &mut Chunk {
+    pub fn get_chunk_or_create(&mut self, chunk_position: IVec3) -> &mut Chunk {
         let exists = self.chunks.get(chunk_position).is_some();
         if exists {
             return self.chunks.get_mut(chunk_position).unwrap();
         } else {
-            self.chunks.set(chunk_position, Chunk::new());
+            self.chunks.set(chunk_position, Chunk::new(chunk_position));
             return self.chunks.get_mut(chunk_position).unwrap();
         }
     }
 
-    pub fn replace_chunk(&mut self, chunk_position: [i32; 3], chunk: Chunk) {
+    pub fn replace_chunk(&mut self, chunk_position: IVec3, chunk: Chunk) {
         self.chunks.set(chunk_position, chunk);
     }
 
@@ -951,12 +961,12 @@ impl ChunkManager {
     //     Self::chunk_distance2(chunk_position, camera_position).sqrt()
     // }
 
-    fn chunk_distance2_by_world(chunk_position: &[i32; 3], camera_position: [f32; 3]) -> f32 {
+    fn chunk_distance2_by_world(chunk_position: &IVec3, camera_position: [f32; 3]) -> f32 {
         let chunk_position_world = [(chunk_position[0] as f32+0.5) * CHUNK_SIZE as f32 , (chunk_position[1] as f32+0.5) * CHUNK_SIZE as f32, (chunk_position[2] as f32+0.5) * CHUNK_SIZE as f32];
         (chunk_position_world[0]-camera_position[0]).powi(2)+(chunk_position_world[1]-camera_position[1]).powi(2)+(chunk_position_world[2]-camera_position[2]).powi(2)
     }
 
-    fn chunk_distance2_by_chunk(chunk_position: &[i32; 3], camera_position: [f32; 3]) -> i32 {
+    fn chunk_distance2_by_chunk(chunk_position: &IVec3, camera_position: [f32; 3]) -> i32 {
         let camera_position_chunk = [camera_position[0] as i32 / CHUNK_SIZE as i32, camera_position[1] as i32 / CHUNK_SIZE as i32, camera_position[2] as i32 / CHUNK_SIZE as i32];
         (camera_position_chunk[0]-chunk_position[0]).pow(2)+(camera_position_chunk[1]-chunk_position[1]).pow(2)+(camera_position_chunk[2]-chunk_position[2]).pow(2)
     }
@@ -969,27 +979,27 @@ impl ChunkManager {
         }).map(|i| self.chunks.main.get(i).unwrap())
     }
 
-    pub fn chunks(&self) -> impl Iterator<Item = (&[i32; 3], &Chunk)> {
+    pub fn chunks(&self) -> impl Iterator<Item = (&IVec3, &Chunk)> {
         self.chunks.main.iter()
     }
 
-    pub fn chunks_mut(&mut self) -> impl Iterator<Item = (&[i32; 3], &mut Chunk)> {
+    pub fn chunks_mut(&mut self) -> impl Iterator<Item = (&IVec3, &mut Chunk)> {
         self.chunks.main.iter_mut()
     }
 
-    pub fn chunk_positions_owned(&self) -> Vec<[i32; 3]> {
+    pub fn chunk_positions_owned(&self) -> Vec<IVec3> {
         self.chunks.main.keys().cloned().collect()
     }
 
-    pub fn chunk_positions(&self) -> std::collections::hash_map::Keys<'_, [i32; 3], Chunk> {
+    pub fn chunk_positions(&self) -> std::collections::hash_map::Keys<'_, IVec3, Chunk> {
         self.chunks.main.keys()
     }
 
-    pub fn chunk_exists(&self, chunk_position: [i32; 3]) -> bool {
+    pub fn chunk_exists(&self, chunk_position: IVec3) -> bool {
         self.chunks.main.contains_key(&chunk_position)
     }
 
-    pub fn chunk_loaded(&self, chunk_position: [i32; 3]) -> bool {
+    pub fn chunk_loaded(&self, chunk_position: IVec3) -> bool {
         if self.chunks.main.contains_key(&chunk_position) {
             return self.chunks.main.get(&chunk_position).unwrap().data.generated_blocks;
         } else {
@@ -997,7 +1007,7 @@ impl ChunkManager {
         }
     }
 
-    pub fn get_block(&self, world_position: [i32; 3]) -> BlockID {
+    pub fn get_block(&self, world_position: IVec3) -> BlockID {
         let x = world_position[0];
         let y = world_position[1];
         let z = world_position[2];
@@ -1007,14 +1017,14 @@ impl ChunkManager {
         let bx = x.rem_euclid(CHUNK_SIZE as i32) as u32;
         let by = y.rem_euclid(CHUNK_SIZE as i32) as u32;
         let bz = z.rem_euclid(CHUNK_SIZE as i32) as u32;
-        if let Some(chunk) = self.chunks.get([cx, cy, cz]) {
+        if let Some(chunk) = self.chunks.get(ivec3(cx, cy, cz)) {
             return chunk.data.blocks[index_in_chunk(bx, by, bz)];
         } else {
             return AIR;
         }
     }
 
-    pub fn set_block(&mut self, world_position: [i32; 3], block_id: BlockID, update_synchronously: bool) {
+    pub fn get_block_state(&self, world_position: IVec3) -> Option<&Vec<u8>> {
         let x = world_position[0];
         let y = world_position[1];
         let z = world_position[2];
@@ -1024,18 +1034,52 @@ impl ChunkManager {
         let bx = x.rem_euclid(CHUNK_SIZE as i32) as u32;
         let by = y.rem_euclid(CHUNK_SIZE as i32) as u32;
         let bz = z.rem_euclid(CHUNK_SIZE as i32) as u32;
-        if let Some(chunk) = self.chunks.get_mut([cx, cy, cz]) {
-            chunk.set_block([bx, by, bz], block_id, update_synchronously);
+        if let Some(chunk) = self.chunks.get(ivec3(cx, cy, cz)) {
+            return chunk.data.block_data.get(&uvec3(bx, by, bz));
+        } else {
+            return None;
         }
     }
 
-    pub fn lod_for_distance2(chunk_position: [i32; 3], player_position: [f32; 3]) -> i32 {
-        2i32.pow((IVec3::from(chunk_position).as_vec3().mul(CHUNK_SIZE as f32).distance_squared(Vec3::from(player_position))/250.0f32.powi(2).floor()) as u32).min(4).max(1)
+    pub fn get_block_state_mut(&mut self, world_position: IVec3) -> Option<&mut Vec<u8>> {
+        let x = world_position[0];
+        let y = world_position[1];
+        let z = world_position[2];
+        let cx = (x as f32 /CHUNK_SIZE as f32).floor() as i32;
+        let cy = (y as f32 /CHUNK_SIZE as f32).floor() as i32;
+        let cz = (z as f32 /CHUNK_SIZE as f32).floor() as i32;
+        let bx = x.rem_euclid(CHUNK_SIZE as i32) as u32;
+        let by = y.rem_euclid(CHUNK_SIZE as i32) as u32;
+        let bz = z.rem_euclid(CHUNK_SIZE as i32) as u32;
+        if let Some(chunk) = self.chunks.get_mut(ivec3(cx, cy, cz)) {
+            return chunk.data.block_data.get_mut(&uvec3(bx, by, bz));
+        } else {
+            return None;
+        }
+    }
+
+    pub fn set_block(&mut self, world_position: IVec3, block_id: BlockID, state: Option<Vec<u8>>, update_synchronously: bool) {
+        let x = world_position[0];
+        let y = world_position[1];
+        let z = world_position[2];
+        let cx = (x as f32 /CHUNK_SIZE as f32).floor() as i32;
+        let cy = (y as f32 /CHUNK_SIZE as f32).floor() as i32;
+        let cz = (z as f32 /CHUNK_SIZE as f32).floor() as i32;
+        let bx = x.rem_euclid(CHUNK_SIZE as i32) as u32;
+        let by = y.rem_euclid(CHUNK_SIZE as i32) as u32;
+        let bz = z.rem_euclid(CHUNK_SIZE as i32) as u32;
+        if let Some(chunk) = self.chunks.get_mut(ivec3(cx, cy, cz)) {
+            chunk.set_block(uvec3(bx, by, bz), block_id, state, update_synchronously);
+        }
+    }
+
+    pub fn lod_for_distance2(chunk_position: IVec3, player_position: [f32; 3]) -> i32 {
+        2i32.pow((chunk_position.as_vec3().mul(CHUNK_SIZE as f32).distance_squared(Vec3::from(player_position))/250.0f32.powi(2).floor()) as u32).min(4).max(1)
     }
 }
 
 struct ChunkMap {
-    main: HashMap<[i32; 3], Chunk>,
+    main: HashMap<IVec3, Chunk>,
 }
 
 impl ChunkMap {
@@ -1045,15 +1089,15 @@ impl ChunkMap {
         }
     }
 
-    fn get(&self, key: [i32; 3]) -> Option<&Chunk> {
+    fn get(&self, key: IVec3) -> Option<&Chunk> {
         self.main.get(&key)
     }
 
-    fn get_mut(&mut self, key: [i32; 3]) -> Option<&mut Chunk> {
+    fn get_mut(&mut self, key: IVec3) -> Option<&mut Chunk> {
         self.main.get_mut(&key)
     }
 
-    fn set(&mut self, key: [i32; 3], chunk: Chunk) -> Option<Chunk> {
+    fn set(&mut self, key: IVec3, chunk: Chunk) -> Option<Chunk> {
         self.main.insert(key, chunk)
     }
 }
@@ -1091,7 +1135,7 @@ impl ChunkBlockGeneratorResources {
         let gen_width;
         let gen_height;
         let noise_map;
-        let chunk_pos: IVec3 = chunk_for_block_position([x, 0, z]).into();
+        let chunk_pos: IVec3 = chunk_for_block_position(ivec3(x, 0, z)).into();
         let base_xf64 = x as f64;
         let base_zf64 = z as f64;
         if cache {
@@ -1165,6 +1209,7 @@ impl ChunkBlockGeneratorResources {
 mod worldgen_test {
     use std::{fs::write, io::Cursor, path::Path};
 
+use glam::ivec3;
 use image::{ImageBuffer, ImageFormat, Luma};
 
 use crate::chunk::{CHUNK_SIZE, ChunkManager};
@@ -1176,7 +1221,7 @@ use crate::chunk::{CHUNK_SIZE, ChunkManager};
         for cx in 0..100 {
             for cz in 0..100 {
                 println!("{}/10,000", cx*100+cz);
-                ChunkManager::generate_blocks_req(super::GenerateChunkBlocksRequest { chunk_position: [cx as i32, 0, cz as i32], player_position: [(cx * CHUNK_SIZE) as f32, 0.0, (cz * CHUNK_SIZE) as f32] }, &mut resources, Some(|heights: Vec<f64>| {
+                ChunkManager::generate_blocks_req(super::GenerateChunkBlocksRequest { chunk_position: ivec3(cx as i32, 0, cz as i32), player_position: [(cx * CHUNK_SIZE) as f32, 0.0, (cz * CHUNK_SIZE) as f32] }, &mut resources, Some(|heights: Vec<f64>| {
                     for x in 0..CHUNK_SIZE {
                         for z in 0..CHUNK_SIZE {
                             let height = heights[(x * CHUNK_SIZE + z) as usize];

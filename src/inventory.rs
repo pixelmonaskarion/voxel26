@@ -1,37 +1,39 @@
-use bespoke_engine::resource_compiler::AtlasSection;
+use std::ops::{Add, AddAssign, Sub, SubAssign};
+
 use itertools::Itertools;
 
-use crate::{crafting::CraftingRecipe, items::{self, ItemID}, registries::Registries};
+use crate::{crafting::CraftingRecipe, items::{self, ItemIDRep}, registries::Registries};
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct Inventory {
-    pub items: Vec<InventoryItemStack>,
+    pub items: Vec<ItemStack>,
     pub selected: usize,
 }
 
 impl Inventory {
-    pub fn empty_size(size: usize, registries: &Registries) -> Self {
+    pub fn empty_size(size: usize) -> Self {
         Self {
-            items: vec![InventoryItemStack::new(ItemStack::EMPTY, registries); size],
+            items: vec![ItemStack::empty(); size],
             selected: 0,
         }
     }
 
-    pub fn selected_item(&self) -> &InventoryItemStack {
+    pub fn selected_item(&self) -> &ItemStack {
         &self.items[self.selected]
     }
 
-    pub fn selected_item_mut(&mut self) -> &mut InventoryItemStack {
+    pub fn selected_item_mut(&mut self) -> &mut ItemStack {
         &mut self.items[self.selected]
     }
 
-    pub fn add(&mut self, item_stack: &InventoryItemStack) -> bool {
+    pub fn add(&mut self, item_stack: &ItemStack) -> bool {
         for inventory_stack in &mut self.items {
-            if inventory_stack.stack.item == item_stack.stack.item {
-                inventory_stack.stack.count += item_stack.stack.count;
+            if inventory_stack.item == item_stack.item {
+                inventory_stack.count += item_stack.count;
                 return true;
             }
-            if inventory_stack.stack.is_empty() {
+            if inventory_stack.is_empty() {
                 *inventory_stack = item_stack.clone();
                 return true;
             }
@@ -40,22 +42,22 @@ impl Inventory {
     }
 
     pub fn calculate_crafting_result(&mut self, registries: &Registries) -> Option<CraftingRecipe> {
-        let pattern = self.items[0..9].iter().chunks(3).into_iter().map(|row| row.map(|it| ItemStack { item: it.stack.item, count: 1 }).collect_vec()).collect_vec();
+        let pattern = self.items[0..9].iter().chunks(3).into_iter().map(|row| row.map(|it| ItemStack { item: it.item.clone(), count: 1 }).collect_vec()).collect_vec();
         let recipe = registries.crafting_registry.get_recipe_for_pattern(pattern, &registries);
         if let Some(recipe) = &recipe {
-            self.items[9] = InventoryItemStack::new(recipe.result.clone(), registries);
+            self.items[9] = recipe.result.clone();
         } else {
-            self.items[9] = InventoryItemStack::new(ItemStack::EMPTY, registries);
+            self.items[9] = ItemStack::empty();
         }
         recipe
     }
 
-    pub fn take_crafting_result(&mut self, cursor_stack: &mut InventoryItemStack, registries: &Registries) {
+    pub fn take_crafting_result(&mut self, cursor_stack: &mut ItemStack, registries: &Registries) {
         if let Some(recipe) = self.calculate_crafting_result(registries) {
-            if cursor_stack.stack.is_empty() {
+            if cursor_stack.is_empty() {
                 std::mem::swap(cursor_stack, &mut self.items[9]);
-            } else if cursor_stack.stack.item == self.items[9].stack.item {
-                cursor_stack.stack.count += self.items[9].stack.count;
+            } else if cursor_stack.item == self.items[9].item {
+                *cursor_stack += self.items[9].count;
             } else {
                 return;
             }
@@ -64,95 +66,99 @@ impl Inventory {
                 if flattened_pattern[i].tool {
                 
                 } else {
-                    self.items[i].stack.count -= 1;
-                }
-                if self.items[i].stack.count <= 0 {
-                    self.items[i] = InventoryItemStack::new(ItemStack::EMPTY, registries);
+                    self.items[i] -= 1;
                 }
             }
         }
     }
 }
 
-pub fn cursor_stack_interaction(cursor_stack: &mut InventoryItemStack, inventory_stack: &mut InventoryItemStack, interaction: InventoryInteraction, registries: &Registries) {
-    if cursor_stack.stack.item == inventory_stack.stack.item {
-        match interaction {
-            InventoryInteraction::TakeOne => {
-                cursor_stack.stack.count -= 1;
-                inventory_stack.stack.count += 1;
-            },
-            InventoryInteraction::TakeStack => {
-                inventory_stack.stack.count += cursor_stack.stack.count;
-                cursor_stack.stack.count = 0;
-            }
-        };
-    } else if !cursor_stack.stack.is_empty() && inventory_stack.stack.is_empty() {
-        match interaction {
-            InventoryInteraction::TakeOne => {
-                *inventory_stack = InventoryItemStack::new(ItemStack::new(cursor_stack.stack.item, 1), registries);
-                cursor_stack.stack.count -= 1;
-            },
-            InventoryInteraction::TakeStack => {
-                std::mem::swap(cursor_stack, inventory_stack);
-            }
-        };
-    } else if !inventory_stack.stack.is_empty() && cursor_stack.stack.is_empty() {
-        match interaction {
-            InventoryInteraction::TakeOne => {
-                *cursor_stack = InventoryItemStack::new(ItemStack::new(inventory_stack.stack.item, 1), registries);
-                inventory_stack.stack.count -= 1;
-            },
-            InventoryInteraction::TakeStack => {
-                std::mem::swap(cursor_stack, inventory_stack);
-            }
-        };
+pub fn cursor_stack_interaction(cursor_stack: &mut ItemStack, inventory_stack: &mut ItemStack, is_output_slot: bool, interaction: InventoryInteraction) {
+    if is_output_slot {
+        if cursor_stack.item == inventory_stack.item {
+            *cursor_stack += inventory_stack.count;
+            *inventory_stack = ItemStack::empty();
+        } else if !inventory_stack.is_empty() && cursor_stack.is_empty() {
+            std::mem::swap(cursor_stack, inventory_stack);
+        }
     } else {
-        std::mem::swap(cursor_stack, inventory_stack);
-    }
-    if cursor_stack.stack.count == 0 {
-        *cursor_stack = InventoryItemStack::new(ItemStack::EMPTY, registries);
-    }
-    if inventory_stack.stack.count == 0 {
-        *inventory_stack = InventoryItemStack::new(ItemStack::EMPTY, registries);
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct InventoryItemStack {
-    pub stack: ItemStack,
-    pub atlas_section: AtlasSection,
-}
-
-impl InventoryItemStack {
-    pub fn new(stack: ItemStack, registries: &Registries) -> Self {
-        Self {
-            atlas_section: registries.item_atlas_registry.get_item(&stack.item),
-            stack,
+        if cursor_stack.item == inventory_stack.item {
+            match interaction {
+                InventoryInteraction::TakeOne => {
+                    *cursor_stack -= 1;
+                    *inventory_stack += 1;
+                },
+                InventoryInteraction::TakeStack => {
+                    *inventory_stack += cursor_stack.count;
+                    *cursor_stack = ItemStack::empty();
+                }
+            };
+        } else if !cursor_stack.is_empty() && inventory_stack.is_empty() {
+            match interaction {
+                InventoryInteraction::TakeOne => {
+                    *inventory_stack = ItemStack::new(cursor_stack.item.clone(), 1);
+                    *cursor_stack -= 1;
+                },
+                InventoryInteraction::TakeStack => {
+                    std::mem::swap(cursor_stack, inventory_stack);
+                }
+            };
+        } else if !inventory_stack.is_empty() && cursor_stack.is_empty() {
+            match interaction {
+                InventoryInteraction::TakeOne => {
+                    *cursor_stack = ItemStack::new(inventory_stack.item.clone(), 1);
+                    *inventory_stack -= 1;
+                },
+                InventoryInteraction::TakeStack => {
+                    std::mem::swap(cursor_stack, inventory_stack);
+                }
+            };
+        } else {
+            std::mem::swap(cursor_stack, inventory_stack);
         }
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct ItemStack {
-    pub item: ItemID,
+    pub item: ItemIDRep,
     pub count: i32,
 }
 
 impl ItemStack {
-    pub const EMPTY: Self = ItemStack {
-        item: items::NOTHING,
-        count: 0,
-    };
-
-    pub fn new(item: ItemID, count: i32) -> Self {
+    pub fn new(item: ItemIDRep, count: i32) -> Self {
         Self {
             count,
             item,
         }
     }
 
+    pub fn empty() -> Self {
+        Self {
+            item: items::NOTHING.into(),
+            count: 0,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.count == 0 || self.item == items::NOTHING
+        self.count <= 0 || self.item == items::NOTHING
+    }
+}
+
+
+impl AddAssign<i32> for ItemStack {
+    fn add_assign(&mut self, rhs: i32) {
+        self.count += rhs;
+        if self.is_empty() {
+            *self = Self::empty();
+        }
+    }
+}
+
+impl SubAssign<i32> for ItemStack {
+    fn sub_assign(&mut self, rhs: i32) {
+        self.add_assign(-rhs);
     }
 }
 

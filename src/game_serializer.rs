@@ -1,15 +1,14 @@
-use std::{collections::HashMap, fs::{self, create_dir_all, read, write}, io::{self, Write}, num::ParseIntError, path::PathBuf, time::Duration};
+use std::{fs::{self, create_dir_all, read, write}, io::{self, Write}, num::ParseIntError, path::PathBuf};
 
-use bespoke_engine::{camera::Camera, resource_compiler::dir_contents};
+use bespoke_engine::resource_compiler::dir_contents;
 use directories::ProjectDirs;
 use flate2::Compression;
-use glam::{IVec3, Vec3};
+use glam::ivec3;
 use itertools::Itertools;
 use rkyv::rancor;
-use rustc_hash::FxHashMap;
 use thiserror::Error;
 
-use crate::{chunk::{ArchivedChunkData, Chunk, ChunkData}, crafting::ItemStackData, game::Game, inventory::{Inventory, InventoryItemStack, ItemStack}, player::{EntityAttribute, Player}, registries::Registries};
+use crate::{chunk::{ArchivedChunkData, Chunk, ChunkData}, game::Game, player::{ArchivedPlayer, Player}};
 
 pub struct GameSerializer {
     project_dirs: ProjectDirs,
@@ -52,7 +51,7 @@ impl GameSerializer {
         }
         //player
         let player_file = data_dir.join("player.rkyv");
-        write(player_file, Self::gzip(&rkyv::to_bytes::<rancor::Error>(&PlayerData::from_real(&game.player)).unwrap())).unwrap();
+        write(player_file, Self::gzip(&rkyv::to_bytes::<rancor::Error>(&game.player).unwrap())).unwrap();
         //world_info
         let player_file = data_dir.join("world_info.rkyv");
         write(player_file, Self::gzip(&rkyv::to_bytes::<rancor::Error>(&game.world_info).unwrap())).unwrap();
@@ -63,8 +62,8 @@ impl GameSerializer {
         let world_dir = data_dir.join("world");
         let player_file = data_dir.join("player.rkyv");
         if world_dir.exists() && player_file.exists() {
-            let player_json: PlayerData =  rkyv::deserialize::<PlayerData, rancor::Error>(rkyv::access::<ArchivedPlayerData, rancor::Error>(&Self::ungzip(&fs::read(player_file).unwrap())).unwrap()).unwrap();
-            game.player = player_json.to_real(&game.registries);
+            let player: Player =  rkyv::deserialize::<Player, rancor::Error>(rkyv::access::<ArchivedPlayer, rancor::Error>(&Self::ungzip(&fs::read(player_file).unwrap())).unwrap()).unwrap();
+            game.player = player;
             for chunk_file in dir_contents(world_dir) {
                 if let Err(e) = self.load_chunk(game, chunk_file) {
                     println!("{e:?}");
@@ -81,13 +80,12 @@ impl GameSerializer {
         let x = name[x_index+1..y_index].parse()?;
         let y = name[y_index+1..z_index].parse()?;
         let z = name[z_index+1..].parse()?;
-        let pos = [x, y, z];
+        let pos = ivec3(x, y, z);
         let chunk_bytes = Self::ungzip(&read(chunk_file).unwrap());
         let chunk_data = rkyv::deserialize::<ChunkData, rancor::Error>(rkyv::access::<ArchivedChunkData, rancor::Error>(&chunk_bytes).unwrap()).unwrap();
         game.chunk_manager.replace_chunk(pos, Chunk {
             creating_model: false,
             data: chunk_data,
-            entities: HashMap::default(),
             lod: 0,
             model: None,
             needed_chunk_updates: vec![],
@@ -121,66 +119,4 @@ pub enum ChunkLoadError {
     IoError(#[from] io::Error),
     #[error("invalid file name")]
     InvalidFileName(String),
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct PlayerData {
-    pub camera: Camera,
-    pub position: Vec3,
-    pub velocity: Vec3,
-    pub break_progress: Duration,
-    pub break_position: Option<IVec3>,
-    pub time_since_ground: Duration,
-    pub movement_mode: i32,
-    pub break_cooldown: Duration,
-
-    pub inventory: InventoryData,
-    pub attributes: FxHashMap<EntityAttribute, f32>,
-    pub health: f32,
-}
-
-impl PlayerData {
-    pub fn from_real(player: &Player) -> Self {
-        Self {
-            camera: player.camera.clone(),
-            break_cooldown: player.break_cooldown,
-            break_position: player.break_position,
-            break_progress: player.break_progress,
-            health: player.health,
-            movement_mode: player.movement_mode,
-            position: player.position,
-            velocity: player.velocity,
-            time_since_ground: player.time_since_ground,
-            attributes: player.attributes.clone(),
-            inventory: InventoryData {
-                selected: player.inventory.selected,
-                items: player.inventory.items.iter().map(|it| ItemStackData { id: it.stack.item.into(), count: it.stack.count }).collect()
-            }
-        }
-    }
-
-    pub fn to_real(&self, registries: &Registries) -> Player {
-        Player {
-            camera: self.camera.clone(),
-            break_position: self.break_position,
-            break_progress: self.break_progress,
-            break_cooldown: self.break_cooldown,
-            health: self.health,
-            movement_mode: self.movement_mode,
-            position: self.position,
-            velocity: self.velocity,
-            time_since_ground: self.time_since_ground,
-            attributes: self.attributes.clone(),
-            inventory: Inventory {
-                selected: self.inventory.selected,
-                items: self.inventory.items.iter().map(|it| InventoryItemStack::new(ItemStack { item: registries.item_registry.get_item(&it.id).id, count: it.count }, registries)).collect()
-            }
-        }
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct InventoryData {
-    pub items: Vec<ItemStackData>,
-    pub selected: usize,
 }

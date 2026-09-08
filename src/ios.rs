@@ -24,6 +24,7 @@ mod crafting;
 mod game_serializer;
 mod tags;
 mod const_block_models;
+mod block_states;
 
 include!(concat!(env!("OUT_DIR"), "/resources.rs"));
 

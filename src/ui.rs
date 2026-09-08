@@ -1,9 +1,9 @@
 use bespoke_engine::{binding::Descriptor, culling::AABB, model::{Model, ToRaw}, surface_context::SurfaceCtx};
 use bytemuck::{NoUninit, bytes_of};
-use glam::{Vec2, vec2};
+use glam::{IVec3, Vec2, vec2};
 use wgpu_text::glyph_brush::{HorizontalAlign, Layout, OwnedSection, OwnedText, VerticalAlign};
 
-use crate::{inventory::Inventory};
+use crate::{chunk::ChunkManager, game::Game, inventory::{Inventory, ItemStack}};
 
 const ATLAS_X_BLOCKS: u32 = 16;
 const ATLAS_Y_BLOCKS: u32 = 16;
@@ -131,7 +131,24 @@ pub fn generate_crosshair_ui_model(surface_ctx: &dyn SurfaceCtx) -> Model {
 #[derive(PartialEq, Eq, Debug)]
 pub enum OpenInventory {
     PlayerCrafting(Inventory),
-    PlayerInventory,
+    // PlayerInventory,
+    KilnBlockState(IVec3, Inventory),
+}
+
+impl OpenInventory {
+    pub fn stack_at_index(&self, index: usize) -> &ItemStack {
+        match self {
+            OpenInventory::PlayerCrafting(inventory) => &inventory.items[index],
+            OpenInventory::KilnBlockState(_, inventory) => &inventory.items[index]
+        }
+    }
+
+    pub fn stack_at_index_mut<'a>(&mut self, index: usize) -> &mut ItemStack {
+        match self {
+            OpenInventory::PlayerCrafting(inventory) => &mut inventory.items[index],
+            OpenInventory::KilnBlockState(_, inventory) => &mut inventory.items[index],
+        }
+    }
 }
 
 pub struct InventoryModel {
@@ -141,21 +158,33 @@ pub struct InventoryModel {
 
 pub fn inventory_margins(inventory: &OpenInventory) -> f32 {
     match inventory {
-        OpenInventory::PlayerInventory => 0.1,
+        // OpenInventory::PlayerInventory => 0.1,
         OpenInventory::PlayerCrafting(_) => 0.1,
+        OpenInventory::KilnBlockState(_, _) => 0.1,
     }
 }
 
-pub fn inventory_location(inventory: &OpenInventory, physical_x: i32, physical_y: i32) -> Option<InventoryLocation<'_>> {
+pub fn inventory_location(inventory: &OpenInventory, physical_x: i32, physical_y: i32) -> Option<OpenInventoryLocation> {
     match inventory {
-        OpenInventory::PlayerInventory => Some(InventoryLocation { inventory, x: physical_x, y: physical_y }),
+        // OpenInventory::PlayerInventory => Some(InventoryLocation { player: false, x: physical_x, y: physical_y }),
         OpenInventory::PlayerCrafting(_) => {
             if (5..9).contains(&physical_y) {
-                Some(InventoryLocation { inventory: &OpenInventory::PlayerInventory, x: physical_x, y: physical_y-5 })
+                Some(OpenInventoryLocation { player: true, x: physical_x, y: physical_y-5 })
             } else if (1..4).contains(&physical_y) && (4..7).contains(&physical_x) {
-                Some(InventoryLocation { inventory, x: physical_x-4, y: physical_y-1 })
+                Some(OpenInventoryLocation { player: false, x: physical_x-4, y: physical_y-1 })
             } else if physical_y == 2 && physical_x == 8 {
-                Some(InventoryLocation { inventory, x: 4, y: 1 })
+                Some(OpenInventoryLocation { player: false, x: 4, y: 1 })
+            } else {
+                None
+            }
+        },
+        OpenInventory::KilnBlockState(_, _) => {
+            if (5..9).contains(&physical_y) {
+                Some(OpenInventoryLocation { player: true, x: physical_x, y: physical_y-5 })
+            } else if physical_x == 0 && physical_y == 0 {
+                Some(OpenInventoryLocation { player: false, x: 0, y: 0 })
+            } else if physical_x == 1 && physical_y == 0 {
+                Some(OpenInventoryLocation { player: false, x: 1, y: 0 })
             } else {
                 None
             }
@@ -165,45 +194,46 @@ pub fn inventory_location(inventory: &OpenInventory, physical_x: i32, physical_y
 
 pub fn inventory_physical_size(inventory: &OpenInventory) -> (i32, i32) {
     match inventory {
-        OpenInventory::PlayerInventory => (4, 9),
+        // OpenInventory::PlayerInventory => (4, 9),
         OpenInventory::PlayerCrafting(_) => (9, 9),
+        OpenInventory::KilnBlockState(_, _) => (9, 9),
     }
 }
 
 #[derive(Debug)]
-pub struct InventoryLocation<'a> {
-    pub inventory: &'a OpenInventory,
+pub struct OpenInventoryLocation {
+    pub player: bool,
     pub x: i32,
     pub y: i32,
 }
 
-impl <'a> InventoryLocation<'a> {
-    pub fn inner_inventory(&'a self) -> Option<&'a Inventory> {
-        match self.inventory {
-            OpenInventory::PlayerInventory => None,
-            OpenInventory::PlayerCrafting(inventory) => Some(inventory)
-        }
-    }
-}
+// impl <'a> InventoryLocation<'a> {
+//     pub fn inner_inventory(&'a self) -> Option<&'a Inventory> {
+//         match self.inventory {
+//             OpenInventory::PlayerInventory => None,
+//             OpenInventory::PlayerCrafting(inventory) => Some(inventory)
+//         }
+//     }
+// }
 
-pub struct InventoryLocationMut<'a> {
-    pub inventory: &'a mut OpenInventory,
-    pub x: i32,
-    pub y: i32,
-}
+// pub struct InventoryLocationMut<'a> {
+//     // pub inventory: &'a mut OpenInventory,
+//     pub x: i32,
+//     pub y: i32,
+// }
 
-impl <'a> InventoryLocationMut<'a> {
-    pub fn as_ref<'b>(&'b self) -> InventoryLocation<'b> {
-        InventoryLocation { inventory: self.inventory, x: self.x, y: self.y }
-    }
+// impl <'a> InventoryLocationMut<'a> {
+//     pub fn as_ref<'b>(&'b self) -> InventoryLocation<'b> {
+//         InventoryLocation { inventory: self.inventory, x: self.x, y: self.y }
+//     }
 
-    pub fn inner_inventory(&'a mut self) -> Option<&'a mut Inventory> {
-        match self.inventory {
-            OpenInventory::PlayerInventory => None,
-            OpenInventory::PlayerCrafting(inventory) => Some(inventory)
-        }
-    }
-}
+//     pub fn inner_inventory(&'a mut self) -> Option<&'a mut Inventory> {
+//         match self.inventory {
+//             OpenInventory::PlayerInventory => None,
+//             OpenInventory::PlayerCrafting(inventory) => Some(inventory)
+//         }
+//     }
+// }
 
 pub fn create_inventory_model(surface_ctx: &dyn SurfaceCtx, inventory: &OpenInventory) -> InventoryModel {
     let aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
@@ -277,46 +307,47 @@ pub fn create_inventory_model(surface_ctx: &dyn SurfaceCtx, inventory: &OpenInve
     InventoryModel { container:  Model::new(vertices, &indices, AABB::zero(), surface_ctx.device()), items }
 }
 
-pub fn text_sections_for_inventory<'a>(surface_ctx: &dyn SurfaceCtx, item_at: &'a dyn Fn(InventoryLocation<'a>) -> Option<i32>, inventory: &'a OpenInventory) -> Vec<OwnedSection> {
-    let aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
-    let margins = inventory_margins(inventory);
-    let (margin_width, margin_height) = if surface_ctx.config().width > surface_ctx.config().height {
-        (margins / aspect_ratio, margins)
-    } else {
-        (margins, margins * aspect_ratio)
-    };
-    // let (num_rows, num_cols) = inventory_size(inventory);
-    let (num_physical_rows, num_physical_cols) = inventory_physical_size(inventory);
-    let (tile_width, tile_height) = if num_physical_rows as f32 * aspect_ratio > num_physical_cols as f32 / aspect_ratio {
-        let height = (2.0-margin_height*2.0)/num_physical_rows as f32;
-        (height / aspect_ratio, height)
-    } else {
-        let width = (2.0-margin_width*2.0)/num_physical_cols as f32;
-        (width, width * aspect_ratio)
-    };
-    let total_width = num_physical_cols as f32 * tile_width;
-    let total_height = num_physical_rows as f32 * tile_height;
-    let mut sections = vec![];
-    for physical_y in 0..num_physical_rows {
-        for physical_x in 0..num_physical_cols {
-            let count = inventory_location(inventory, physical_x, physical_y).map(|location| item_at(location)).flatten().unwrap_or(0);
-            if count > 1 {
-                sections.push(OwnedSection::default()
-                    .add_text(
-                        OwnedText::new(format!("{}", count))
-                        .with_scale(surface_ctx.config().height as f32 * tile_height/4.0)
-                        .with_color([0.0, 0.0, 0.0, 1.0]))
-                    .with_bounds((tile_width * surface_ctx.config().width as f32, tile_height * surface_ctx.config().height as f32))
-                    .with_layout(Layout::default().h_align(HorizontalAlign::Right).v_align(VerticalAlign::Bottom))
-                    .with_screen_position((((tile_width * (physical_x as f32 + 1.0) - tile_width/8.0 -total_width/2.0)/2.0 + 0.5)*surface_ctx.config().width as f32, ((-tile_height * (physical_y as f32 + 1.0) +tile_height/16.0 +total_height/2.0)/-2.0 + 0.5)*surface_ctx.config().height as f32))
-                );
+impl <'a> Game<'a> {
+    pub fn text_sections_for_inventory<'b>(&self, surface_ctx: &dyn SurfaceCtx, item_at: &'b dyn Fn(OpenInventoryLocation) -> Option<i32>) -> Vec<OwnedSection> {
+        let aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
+        let margins = inventory_margins(self.open_inventory.as_ref().unwrap());
+        let (margin_width, margin_height) = if surface_ctx.config().width > surface_ctx.config().height {
+            (margins / aspect_ratio, margins)
+        } else {
+            (margins, margins * aspect_ratio)
+        };
+        // let (num_rows, num_cols) = inventory_size(inventory);
+        let (num_physical_rows, num_physical_cols) = inventory_physical_size(self.open_inventory.as_ref().unwrap());
+        let (tile_width, tile_height) = if num_physical_rows as f32 * aspect_ratio > num_physical_cols as f32 / aspect_ratio {
+            let height = (2.0-margin_height*2.0)/num_physical_rows as f32;
+            (height / aspect_ratio, height)
+        } else {
+            let width = (2.0-margin_width*2.0)/num_physical_cols as f32;
+            (width, width * aspect_ratio)
+        };
+        let total_width = num_physical_cols as f32 * tile_width;
+        let total_height = num_physical_rows as f32 * tile_height;
+        let mut sections = vec![];
+        for physical_y in 0..num_physical_rows {
+            for physical_x in 0..num_physical_cols {
+                let count = inventory_location(self.open_inventory.as_ref().unwrap(), physical_x, physical_y).map(|location| item_at(location)).flatten().unwrap_or(0);
+                if count > 1 {
+                    sections.push(OwnedSection::default()
+                        .add_text(
+                            OwnedText::new(format!("{}", count))
+                            .with_scale(surface_ctx.config().height as f32 * tile_height/4.0)
+                            .with_color([0.0, 0.0, 0.0, 1.0]))
+                        .with_bounds((tile_width * surface_ctx.config().width as f32, tile_height * surface_ctx.config().height as f32))
+                        .with_layout(Layout::default().h_align(HorizontalAlign::Right).v_align(VerticalAlign::Bottom))
+                        .with_screen_position((((tile_width * (physical_x as f32 + 1.0) - tile_width/8.0 -total_width/2.0)/2.0 + 0.5)*surface_ctx.config().width as f32, ((-tile_height * (physical_y as f32 + 1.0) +tile_height/16.0 +total_height/2.0)/-2.0 + 0.5)*surface_ctx.config().height as f32))
+                    );
+                }
             }
         }
+        sections
     }
-    sections
 }
-
-pub fn mouse_tile_coords<'a>(mouse_coords: Vec2, surface_ctx: &dyn SurfaceCtx, inventory: &'a mut OpenInventory) -> Option<InventoryLocation<'a>> {
+pub fn mouse_tile_coords<'a>(mouse_coords: Vec2, surface_ctx: &dyn SurfaceCtx, inventory: &'a mut OpenInventory) -> Option<OpenInventoryLocation> {
     let screen_coords = vec2(mouse_coords.x*2.0 - 1.0, -mouse_coords.y*2.0 + 1.0);
     let aspect_ratio = surface_ctx.config().width as f32 / surface_ctx.config().height as f32;
     let margins = inventory_margins(inventory);
