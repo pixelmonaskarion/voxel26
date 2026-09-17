@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bespoke_engine::resource_compiler::AtlasSection;
 
-use crate::{ITEM_ATLAS_PNG_CRUSHED_COPPER_ORE_SECTION, ITEM_ATLAS_PNG_STICK_SECTION, ITEM_ATLAS_PNG_STONE_AXE_SECTION, ITEM_ATLAS_PNG_STONE_HAMMER_SECTION, ITEM_ATLAS_PNG_STONE_PICKAXE_SECTION, ITEM_ATLAS_PNG_STONE_SHOVEL_SECTION, ITEM_ATLAS_PNG_WOODEN_AXE_SECTION, ITEM_ATLAS_PNG_WOODEN_PICKAXE_SECTION, ITEM_ATLAS_PNG_WOODEN_SHOVEL_SECTION, blocks::BlockID, player::{AttributeModifier, AttributeModifierCondition, EntityAttribute}, registries::ItemRegistry, tags::{AXE_BREAKABLE_TAG, PICKAXE_BREAKABLE_TAG, SHOVEL_BREAKABLE_TAG}};
+use crate::{ITEM_ATLAS_PNG_COPPER_INGOT_SECTION, ITEM_ATLAS_PNG_CRUSHED_COPPER_ORE_SECTION, ITEM_ATLAS_PNG_STICK_SECTION, ITEM_ATLAS_PNG_STONE_AXE_SECTION, ITEM_ATLAS_PNG_STONE_HAMMER_SECTION, ITEM_ATLAS_PNG_STONE_PICKAXE_SECTION, ITEM_ATLAS_PNG_STONE_SHOVEL_SECTION, ITEM_ATLAS_PNG_WOODEN_AXE_SECTION, ITEM_ATLAS_PNG_WOODEN_PICKAXE_SECTION, ITEM_ATLAS_PNG_WOODEN_SHOVEL_SECTION, blocks::BlockID, player::{AttributeModifier, AttributeModifierCondition, EntityAttribute}, registries::ItemRegistry, tags::{AXE_BREAKABLE_TAG, PICKAXE_BREAKABLE_TAG, SHOVEL_BREAKABLE_TAG}};
 
 pub type ItemID = &'static str;
 pub type ItemIDRep = String;
@@ -47,6 +47,7 @@ pub const STONE_AXE: ItemID = "stone_axe";
 pub const STONE_SHOVEL: ItemID = "stone_shovel";
 pub const STONE_HAMMER: ItemID = "stone_hammer";
 pub const CRUSHED_COPPER_ORE: ItemID = "crushed_copper_ore";
+pub const COPPER_INGOT: ItemID = "copper_ingot";
 
 pub const GRASS_BLOCK: ItemID = "grass_block";
 pub const STONE_BLOCK: ItemID = "stone_block";
@@ -129,6 +130,13 @@ impl ItemRegistry {
             id: CRUSHED_COPPER_ORE,
             properties: ItemProperties::BasicItem(BasicItem { 
                 section: ITEM_ATLAS_PNG_CRUSHED_COPPER_ORE_SECTION,
+            }),
+            attribute_modifiers: Default::default(),
+        });
+        self.register(Item {
+            id: COPPER_INGOT,
+            properties: ItemProperties::BasicItem(BasicItem { 
+                section: ITEM_ATLAS_PNG_COPPER_INGOT_SECTION,
             }),
             attribute_modifiers: Default::default(),
         });

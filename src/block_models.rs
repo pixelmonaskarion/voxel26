@@ -1,6 +1,6 @@
 use bespoke_engine::{culling::AABB, model::Model, surface_context::SurfaceCtx};
 
-use crate::{BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, blocks::Block, const_block_models::{BlockModel, Vertex}};
+use crate::{BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, blocks::Block, const_block_model_types::{BlockModel, Vertex}};
 
 pub fn block_model(surface_ctx: &dyn SurfaceCtx, block: Block) -> Model {
     let BlockModel { vertices, indices } = if let Some(model) = block.model {
@@ -11,126 +11,150 @@ pub fn block_model(surface_ctx: &dyn SurfaceCtx, block: Block) -> Model {
         let vertices = vec![
             // north
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 0.0, 0.0, 1.0],
                 normal: [0.0, 0.0, -1.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 0.0, 0.0, 1.0],
                 normal: [0.0, 0.0, -1.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 1.0, 0.0, 1.0],
                 normal: [0.0, 0.0, -1.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 1.0, 0.0, 1.0],
                 normal: [0.0, 0.0, -1.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // south
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 0.0, 1.0, 1.0],
                 normal: [0.0, 0.0, 1.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 0.0, 1.0, 1.0],
                 normal: [0.0, 0.0, 1.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 1.0, 1.0, 1.0],
                 normal: [0.0, 0.0, 1.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 1.0, 1.0, 1.0],
                 normal: [0.0, 0.0, 1.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // east
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 0.0, 1.0, 1.0],
                 normal: [1.0, 0.0, 0.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 0.0, 0.0, 1.0],
                 normal: [1.0, 0.0, 0.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 1.0, 0.0, 1.0],
                 normal: [1.0, 0.0, 0.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 1.0, 1.0, 1.0],
                 normal: [1.0, 0.0, 0.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // west
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 0.0, 0.0, 1.0],
                 normal: [-1.0, 0.0, 0.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 0.0, 1.0, 1.0],
                 normal: [-1.0, 0.0, 0.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 1.0, 1.0, 1.0],
                 normal: [-1.0, 0.0, 0.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 1.0, 0.0, 1.0],
                 normal: [-1.0, 0.0, 0.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // up
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 1.0, 0.0, 1.0],
                 normal: [0.0, 1.0, 0.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 1.0, 0.0, 1.0],
                 normal: [0.0, 1.0, 0.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 1.0, 1.0, 1.0],
                 normal: [0.0, 1.0, 0.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 1.0, 1.0, 1.0],
                 normal: [0.0, 1.0, 0.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             // down
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 0.0, 1.0, 1.0],
                 normal: [0.0, -1.0, 0.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 0.0, 1.0, 1.0],
                 normal: [0.0, -1.0, 0.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, block.atlas_section.y as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [0.0, 0.0, 0.0, 1.0],
                 normal: [0.0, -1.0, 0.0, 0.0],
                 color: [block.atlas_section.x as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],
             },
             Vertex {
+                lighting: [1.0; 4],
                 position: [1.0, 0.0, 0.0, 1.0],
                 normal: [0.0, -1.0, 0.0, 0.0],
                 color: [(block.atlas_section.x + block.atlas_section.width) as f32 * atlas_width_proportion, (block.atlas_section.y + block.atlas_section.height) as f32 * atlas_height_proportion, 1.0, 1.0],

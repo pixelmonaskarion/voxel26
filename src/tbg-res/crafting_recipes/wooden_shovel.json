@@ -1,13 +1,14 @@
 {
     "pattern": [
-        " P ",
-        " S ",
-        " S "
+        "P",
+        "S",
+        "S"
     ],
     "result": "X",
     "substitutions": {
         "S": "stick",
         "P": "planks_block",
         "X": "wooden_shovel"
-    }
+    },
+    "crafting_type": "player_crafting"
 }

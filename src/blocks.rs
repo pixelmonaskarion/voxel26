@@ -2,7 +2,7 @@ use std::{hash::Hash, time::Duration};
 
 use bespoke_engine::{resource_compiler::AtlasSection};
 
-use crate::{BLOCK_ATLAS_PNG_COBBLESTONE_SECTION, BLOCK_ATLAS_PNG_COPPER_ORE_SECTION, BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_GRASS_SECTION, BLOCK_ATLAS_PNG_IRON_ORE_SECTION, BLOCK_ATLAS_PNG_KILN_FRONT_SECTION, BLOCK_ATLAS_PNG_LEAVES_SECTION, BLOCK_ATLAS_PNG_PLANKS_SECTION, BLOCK_ATLAS_PNG_RAINBOW_SECTION, BLOCK_ATLAS_PNG_STONE_SECTION, BLOCK_ATLAS_PNG_WATER_SECTION, BLOCK_ATLAS_PNG_WOOD_SECTION, GENERATED_KILN_BLOCK_MODEL, GENERATED_ROCK_BLOCK_MODEL, const_block_models::BlockModelTrait, items::{self, ItemID}, registries::BlockRegistry};
+use crate::{BLOCK_ATLAS_PNG_COBBLESTONE_SECTION, BLOCK_ATLAS_PNG_COPPER_ORE_SECTION, BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_GRASS_SECTION, BLOCK_ATLAS_PNG_IRON_ORE_SECTION, BLOCK_ATLAS_PNG_KILN_FRONT_SECTION, BLOCK_ATLAS_PNG_LEAVES_SECTION, BLOCK_ATLAS_PNG_PLANKS_SECTION, BLOCK_ATLAS_PNG_RAINBOW_SECTION, BLOCK_ATLAS_PNG_STONE_SECTION, BLOCK_ATLAS_PNG_WATER_SECTION, BLOCK_ATLAS_PNG_WOOD_SECTION, GENERATED_KILN_BLOCK_MODEL, GENERATED_ROCK_BLOCK_MODEL, const_block_model_types::BlockModelTrait, items::{self, ItemID}, registries::BlockRegistry};
 
 pub type BlockID = u16;
 
@@ -47,6 +47,7 @@ impl BlockRegistry {
             item: None,
             break_duration: Duration::ZERO,
             drops: items::NOTHING,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: GRASS,
@@ -59,11 +60,12 @@ impl BlockRegistry {
             item: Some(items::GRASS_BLOCK),
             break_duration: Duration::from_secs_f32(0.7),
             drops: items::GRASS_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: WATER,
             solid: false,
-            color: [0.0, 0.0, 1.0, 0.5],
+            color: [0.0, 0.0, 1.0, 0.8],
             atlas_section: BLOCK_ATLAS_PNG_WATER_SECTION,
             model: None,
             layer: TRANSPARENT_LAYER,
@@ -71,6 +73,7 @@ impl BlockRegistry {
             item: None,
             break_duration: Duration::ZERO,
             drops: items::NOTHING,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: STONE,
@@ -83,6 +86,7 @@ impl BlockRegistry {
             item: Some(items::STONE_BLOCK),
             break_duration: Duration::from_secs_f32(6.0),
             drops: items::COBBLESTONE_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: DIRT,
@@ -95,6 +99,7 @@ impl BlockRegistry {
             item: Some(items::DIRT_BLOCK),
             break_duration: Duration::from_secs_f32(0.6),
             drops: items::DIRT_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: ROCK,
@@ -107,6 +112,7 @@ impl BlockRegistry {
             item: Some(items::ROCK_BLOCK),
             break_duration: Duration::from_secs_f32(0.3),
             drops: items::ROCK_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: LEAVES,
@@ -114,11 +120,12 @@ impl BlockRegistry {
             color: [0.0, 0.0, 0.0, 1.0],
             atlas_section: BLOCK_ATLAS_PNG_LEAVES_SECTION,
             model: None,
-            layer: SOLID_LAYER,
+            layer: SEMITRANSPARENT_LAYER,
             cull: false,
             item: Some(items::LEAVES_BLOCK),
             break_duration: Duration::from_secs_f32(0.3),
             drops: items::LEAVES_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: GOLD,
@@ -129,8 +136,9 @@ impl BlockRegistry {
             layer: SOLID_LAYER,
             cull: true,
             item: Some(items::GOLD_BLOCK),
-            break_duration: Duration::from_secs_f32(10.0),
-            drops: items::GOLD_BLOCK
+            break_duration: Duration::from_secs_f32(0.1),
+            drops: items::GOLD_BLOCK,
+            lighting_emission: [5; 3],
         });
         self.register(Block {
             id: WOOD,
@@ -143,6 +151,7 @@ impl BlockRegistry {
             item: Some(items::WOOD_BLOCK),
             break_duration: Duration::from_secs_f32(3.0),
             drops: items::WOOD_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: PLANKS,
@@ -155,6 +164,7 @@ impl BlockRegistry {
             item: Some(items::PLANKS_BLOCK),
             break_duration: Duration::from_secs_f32(2.0),
             drops: items::PLANKS_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: COBBLESTONE,
@@ -167,6 +177,7 @@ impl BlockRegistry {
             item: Some(items::COBBLESTONE_BLOCK),
             break_duration: Duration::from_secs_f32(6.0),
             drops: items::COBBLESTONE_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: IRON_ORE,
@@ -179,6 +190,7 @@ impl BlockRegistry {
             item: Some(items::IRON_ORE_BLOCK),
             break_duration: Duration::from_secs_f32(8.0),
             drops: items::IRON_ORE_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: COPPER_ORE,
@@ -191,6 +203,7 @@ impl BlockRegistry {
             item: Some(items::COPPER_ORE_BLOCK),
             break_duration: Duration::from_secs_f32(7.0),
             drops: items::COPPER_ORE_BLOCK,
+            lighting_emission: [0; 3],
         });
         self.register(Block {
             id: KILN,
@@ -203,6 +216,7 @@ impl BlockRegistry {
             item: Some(items::KILN_BLOCK),
             break_duration: Duration::from_secs_f32(7.0),
             drops: items::KILN_BLOCK,
+            lighting_emission: [0; 3],
         });
     }
 }
@@ -232,11 +246,12 @@ pub struct Block {
     pub color: [f32; 4],
     pub atlas_section: AtlasSection,
     pub model: Option<&'static dyn BlockModelTrait>,
-    pub layer: i32,
+    pub layer: usize,
     pub cull: bool,
     pub item: Option<ItemID>,
     pub drops: ItemID,
     pub break_duration: Duration,
+    pub lighting_emission: [u8; 3],
 }
 
 impl PartialEq for Block {
@@ -261,6 +276,7 @@ impl Eq for Block {}
 //     get_block(block).solid
 // }
 
-pub const SOLID_LAYER: i32 = 0;
-pub const TRANSPARENT_LAYER: i32 = 1;
-pub const NOT_RENDERED_LAYER: i32 = 2;
+pub const SOLID_LAYER: usize = 0;
+pub const SEMITRANSPARENT_LAYER: usize = 1;
+pub const TRANSPARENT_LAYER: usize = 2;
+pub const NOT_RENDERED_LAYER: usize = 3;

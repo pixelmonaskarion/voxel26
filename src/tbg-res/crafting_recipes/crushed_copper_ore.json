@@ -1,8 +1,7 @@
 {
     "pattern": [
-        "   ",
-        " T ",
-        " O "
+        "T",
+        "O"
     ],
     "result": "C",
     "substitutions": {
@@ -12,5 +11,6 @@
         },
         "O": "copper_ore_block",
         "C": "crushed_copper_ore"
-    }
+    },
+    "crafting_type": "player_crafting"
 }

@@ -1,0 +1,9 @@
+{
+    "pattern": ["O"],
+    "result": "I",
+    "substitutions": {
+        "I": "gold_block",
+        "O": "gold_block"
+    },
+    "crafting_type": "kiln"
+}

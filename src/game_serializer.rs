@@ -8,7 +8,7 @@ use itertools::Itertools;
 use rkyv::rancor;
 use thiserror::Error;
 
-use crate::{chunk::{ArchivedChunkData, Chunk, ChunkData}, game::Game, player::{ArchivedPlayer, Player}};
+use crate::{chunk::{ArchivedChunkData, Chunk, ChunkData}, game::Game, player::{ArchivedPlayer, Player}, registries::Registries};
 
 pub struct GameSerializer {
     project_dirs: ProjectDirs,
@@ -89,7 +89,8 @@ impl GameSerializer {
             lod: 0,
             model: None,
             needed_chunk_updates: vec![],
-        });
+            
+        }, &game.registries);
         Ok(())
     }
 

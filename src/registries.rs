@@ -1,10 +1,9 @@
 use bespoke_engine::{binding::{Descriptor, UniformBinding}, camera::OrthographicCamera, model::Render, resource_compiler::AtlasSection, resource_loader::ResourceConst, shader::{Shader, UniformShaderInit}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture}};
 use glam::{Mat4, mat4, uvec2, vec3, vec4};
-use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use wgpu::{Origin3d, RenderPassDepthStencilAttachment, TexelCopyTextureInfo, wgt::CommandEncoderDescriptor};
 
-use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, GENERATED_BLOCK_ATLAS_PNG, GENERATED_CRAFTING_RECIPES_JSON, GENERATED_ITEM_ATLAS_PNG, ITEM_ATLAS_PNG_FARTHEST_SECTION, RES_SHADERS_BLOCK_RENDERER_WGSL, block_models::block_model, block_states::BlockStateProvider, blocks::{Block, BlockID, NOT_RENDERED_LAYER, }, const_block_models::Vertex, crafting::{CraftingIngredientID, CraftingRecipe, CraftingRecipeJson}, game::ScreenInfo, inventory::ItemStack, items::{self, BlockItem, Item, ItemID, ItemIDRep, ItemProperties}};
+use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, GENERATED_BLOCK_ATLAS_PNG, GENERATED_CRAFTING_RECIPES_JSON, GENERATED_ITEM_ATLAS_PNG, ITEM_ATLAS_PNG_FARTHEST_SECTION, RES_SHADERS_BLOCK_RENDERER_WGSL, block_models::block_model, block_states::BlockStateProvider, blocks::{Block, BlockID, NOT_RENDERED_LAYER, }, const_block_model_types::Vertex, crafting::{CraftingRecipe, CraftingRecipeJson}, game::ScreenInfo, inventory::ItemStack, items::{self, BlockItem, Item, ItemID, ItemIDRep, ItemProperties}};
 
 pub struct ItemAtlasRegistry {
     pub texture: UniformBinding<Texture>,
@@ -18,7 +17,7 @@ pub struct ItemAtlasRegistry {
 
 impl ItemAtlasRegistry {
     pub fn new(surface_ctx: &dyn SurfaceCtx) -> Self {
-        let texture = UniformBinding::new(surface_ctx.device(), "Item Atlas", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &GENERATED_ITEM_ATLAS_PNG.load(), "Item Atlas", None, None).unwrap(), None);
+        let texture = UniformBinding::new(surface_ctx.device(), "Item Atlas", Texture::from_bytes(surface_ctx, &GENERATED_ITEM_ATLAS_PNG.load(), "Item Atlas", None, None).unwrap(), None);
         let block_renderer_screen_info = UniformBinding::new(surface_ctx.device(), "", ScreenInfo { 
             camera_raw: OrthographicCamera {
                 eye: vec3(0.0, 1.0, 0.0),
@@ -136,7 +135,7 @@ impl ItemAtlasRegistry {
     }
 
     pub fn resize_atlas(&mut self, to_width: u32, to_height: u32, surface_ctx: &dyn SurfaceCtx) {
-        let new_texture = UniformBinding::new(surface_ctx.device(), "Item Atlas", Texture::blank_texture(surface_ctx.device(), to_width, to_height, self.texture.value.format, self.texture.value.texture.sample_count()), None);
+        let new_texture = UniformBinding::new(surface_ctx.device(), "Item Atlas", Texture::blank_texture(surface_ctx.device(), to_width, to_height, self.texture.value.format, self.texture.value.texture.sample_count(), None, None), None);
         let new_depth_texture = DepthTexture::create_depth_texture(surface_ctx.device(), to_width, to_height, "Item Atlas Depth Texture", self.depth_texture.view.texture().sample_count());
         let mut encoder = surface_ctx.device().create_command_encoder(&CommandEncoderDescriptor::default());
         encoder.copy_texture_to_texture(TexelCopyTextureInfo {
@@ -168,7 +167,7 @@ pub struct Registries {
 
 impl Registries {
     pub fn new(surface_ctx: &dyn SurfaceCtx) -> Self {
-        let block_atlas_texture = UniformBinding::new(surface_ctx.device(), "Block Atlas", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &GENERATED_BLOCK_ATLAS_PNG.load(), "Atlas", None, None).unwrap(), None);
+        let block_atlas_texture = UniformBinding::new(surface_ctx.device(), "Block Atlas", Texture::from_bytes(surface_ctx, &GENERATED_BLOCK_ATLAS_PNG.load(), "Block Atlas", None, None).unwrap(), None);
         let item_atlas_registry = ItemAtlasRegistry::new(surface_ctx);
         let mut item_registry = ItemRegistry::new();
         let mut block_registry = BlockRegistry::new();
@@ -255,7 +254,7 @@ impl Registries {
 }
 
 pub struct CraftingRecipeRegistry {
-    recipes: FxHashMap<Vec<CraftingIngredientID>, Vec<CraftingRecipe>>,
+    recipes: FxHashMap<String, Vec<CraftingRecipe>>,
 }
 
 impl CraftingRecipeRegistry {
@@ -274,19 +273,19 @@ impl CraftingRecipeRegistry {
     }
 
     pub fn register(&mut self, recipe: CraftingRecipe) {
-        let ingredient_ids: Vec<CraftingIngredientID> = recipe.pattern.iter().flatten().map(|stack| stack.ingredient.id()).unique().collect();
-        if !self.recipes.contains_key(&ingredient_ids) {
-            self.recipes.insert(ingredient_ids.clone(), vec![]);
+        // let ingredient_ids: Vec<CraftingIngredientID> = recipe.pattern.iter().flatten().map(|stack| stack.ingredient.id()).unique().collect();
+        if !self.recipes.contains_key(&recipe.crafting_type) {
+            self.recipes.insert(recipe.crafting_type.clone(), vec![]);
         }
-        self.recipes.get_mut(&ingredient_ids).unwrap().push(recipe);
+        self.recipes.get_mut(&recipe.crafting_type).unwrap().push(recipe);
     }
 
-    pub fn get_recipe_for_pattern(&self, pattern: Vec<Vec<ItemStack>>, registries: &Registries) -> Option<CraftingRecipe> {
-        for recipe_set in self.recipes.values() {
-            for possible_match in recipe_set {
-                if possible_match.matches(&pattern, registries) {
-                    return Some(possible_match.clone());
-                }
+    pub fn get_recipe_for_pattern(&self, pattern: Vec<Vec<ItemStack>>, crafting_type: impl Into<String>, registries: &Registries) -> Option<CraftingRecipe> {
+        let crafting_type: String = crafting_type.into();
+        let shrunk_pattern = CraftingRecipe::shrink_pattern(pattern);
+        for possible_match in self.recipes.get(&crafting_type).unwrap_or(&vec![]) {
+            if possible_match.matches(&shrunk_pattern, registries) {
+                return Some(possible_match.clone());
             }
         }
         return None;

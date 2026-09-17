@@ -107,7 +107,7 @@ impl <'a> EntityRenderManager<'a> {
             BasicVertex { position: [size, -size, 0.0], tex_coords: [1.0, 1.0] },
             BasicVertex { position: [size, size, 0.0], tex_coords: [1.0, 0.0] },
         ], &[0_u16, 2, 1, 2, 3, 1], AABB { dimensions: [1.0, 1.0, 0.0] }, surface_ctx.device());
-        let item_shader = Shader::new(ShaderInit { resource: RES_SHADERS_ITEM_ENTITY_WGSL, formats: deferred_formats.clone(), binding_layouts: vec![create_layout::<ScreenInfo>((), surface_ctx.device()), create_layout::<Texture>(TextureLayoutConfig::default(), surface_ctx.device())], shader_types: vec![ScreenInfo::shader_type(()), Texture::shader_type(TextureLayoutConfig::default())], vertex_buffers: vec![BasicVertex::desc(), ItemInstance::desc()], ..Default::default() }, surface_ctx.device());
+        let item_shader = Shader::new(ShaderInit { resource: RES_SHADERS_ITEM_ENTITY_WGSL, formats: deferred_formats.clone(), binding_layouts: vec![create_layout::<ScreenInfo>(&(), surface_ctx.device()), create_layout::<Texture>(&TextureLayoutConfig::default(), surface_ctx.device())], shader_types: vec![ScreenInfo::shader_type(&()), Texture::shader_type(&TextureLayoutConfig::default())], vertex_buffers: vec![BasicVertex::desc(), ItemInstance::desc()], ..Default::default() }, surface_ctx.device());
         let instance_buffer = surface_ctx.device().create_buffer(&BufferDescriptor {
             label: Some("Entity Instance Buffer"),
             mapped_at_creation: false,

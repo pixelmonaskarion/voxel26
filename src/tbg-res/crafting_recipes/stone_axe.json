@@ -1,13 +1,14 @@
 {
     "pattern": [
-        "PP ",
-        "PS ",
-        " S "
+        "PP",
+        "PS",
+        " S"
     ],
     "result": "X",
     "substitutions": {
         "S": "stick",
         "P": "cobblestone_block",
         "X": "stone_axe"
-    }
+    },
+    "crafting_type": "player_crafting"
 }

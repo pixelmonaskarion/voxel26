@@ -8,6 +8,7 @@ struct VertexOutput {
     @location(1) color: vec4f,
     @location(2) transparency: f32,
     @location(3) worldspace: vec4f,
+    @location(4) lighting: vec4f,
 }
 
 @vertex
@@ -20,6 +21,7 @@ fn vs_main(
     out.color = model.color;
     out.transparency = model.position.w;
     out.worldspace = (screen_info.camera.view * vec4f(model.position.xyz, 1.0));
+    out.lighting = model.lighting;
     return out;
 }
 
@@ -30,7 +32,7 @@ fn fs_main(in: VertexOutput) -> DeferredFragmentOutput {
         discard;
     }
     var out: DeferredFragmentOutput;
-    out.color = vec4f(output.xyz, output.w*in.transparency);
+    out.color = vec4f(output.xyz * in.lighting.xyz, output.w*in.transparency);
     out.normal = vec4f(in.normal, 1.0);
     out.worldspace = in.worldspace;
     return out;

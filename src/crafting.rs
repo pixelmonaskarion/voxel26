@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_inline_default::serde_inline_default;
 
@@ -9,6 +10,7 @@ use crate::{inventory::ItemStack, items::ItemIDRep, registries::{ItemRegistry, R
 pub struct CraftingRecipeJson {
     pub pattern: Vec<String>,
     pub result: String,
+    pub crafting_type: String,
     pub substitutions: HashMap<String, CraftingRecipeJsonSubstitution>,
 }
 
@@ -42,6 +44,9 @@ pub enum CraftingIngredientID {
     TagID(TagID),
 }
 
+pub const PLAYER_CRAFTING_TYPE: &'static str = "player_crafting";
+pub const KILN_CRAFTING_TYPE: &'static str = "kiln";
+
 impl CraftingIngredient {
     pub fn id(&self) -> CraftingIngredientID {
         match self {
@@ -61,6 +66,7 @@ pub struct CraftingItemStack {
 pub struct CraftingRecipe {
     pub pattern: Vec<Vec<CraftingItemStack>>,
     pub result: ItemStack,
+    pub crafting_type: String,
 }
 
 impl CraftingRecipe {
@@ -88,12 +94,45 @@ impl CraftingRecipe {
         Self {
             pattern,
             result,
+            crafting_type: json.crafting_type,
         }
     }
 
+    pub fn shrink_pattern(pattern: Vec<Vec<ItemStack>>) -> Vec<Vec<ItemStack>> {
+        let Some(first_not_blank) = pattern.iter().find_position(|it| it.iter().any(|it| !it.is_empty())).map(|it| it.0) else {
+            return pattern;
+        };
+        let last_not_blank = pattern.len()-pattern.iter().rev().find_position(|it| it.iter().any(|it| !it.is_empty())).map(|it| it.0).unwrap();
+        let mut shrunk_pattern = pattern[first_not_blank..last_not_blank].to_vec();
+        if shrunk_pattern.is_empty() || shrunk_pattern[0].is_empty() {
+            return shrunk_pattern;
+        }
+        let mut blank_columns = vec![true; shrunk_pattern[0].len()];
+        for x in 0..shrunk_pattern.len() {
+            for y in 0..shrunk_pattern[x].len() {
+                if !shrunk_pattern[x][y].is_empty() {
+                    blank_columns[y] = false;
+                }
+            }
+        }
+        let first_not_blank = blank_columns.iter().find_position(|it| !**it).map(|it| it.0).unwrap();
+        let last_not_blank = blank_columns.len()-1-blank_columns.iter().rev().find_position(|it| !**it).map(|it| it.0).unwrap();
+        for x in 0..shrunk_pattern.len() {
+            for y in (0..blank_columns.len()).rev() {
+                if y < first_not_blank || y > last_not_blank {
+                    shrunk_pattern[x].remove(y);
+                }
+            }
+        }
+        shrunk_pattern
+    }
+
     pub fn matches(&self, pattern: &Vec<Vec<ItemStack>>, registries: &Registries) -> bool {
-        for x in 0..3 {
-            for y in 0..3 {
+        if pattern.len() != self.pattern.len() || pattern[0].len() != self.pattern[0].len() {
+            return false;
+        }
+        for x in 0..pattern.len() {
+            for y in 0..pattern[x].len() {
                 let self_ingredient = &self.pattern[x][y].ingredient;
                 let stack = &pattern[x][y];
                 if !match self_ingredient {

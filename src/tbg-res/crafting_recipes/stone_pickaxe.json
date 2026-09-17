@@ -9,5 +9,6 @@
         "S": "stick",
         "P": "cobblestone_block",
         "X": "stone_pickaxe"
-    }
+    },
+    "crafting_type": "player_crafting"
 }

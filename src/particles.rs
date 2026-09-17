@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use bespoke_engine::{InstanceTrait, binding::{Descriptor, UniformBinding}, compute::{ComputeOutput, ComputeShader}, culling::AABB, model::{Model, Render, ToRaw}, resource_loader::load_resource_string, shader::{Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, window::BasicVertex};
+use bespoke_engine::{InstanceTrait, binding::{Descriptor, UniformBinding}, compute::{ComputeOutput, ComputeShader}, culling::AABB, model::{Model, ToRaw}, resource_loader::load_resource_string, shader::{Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, window::BasicVertex};
 use bytemuck::{Pod, Zeroable, bytes_of, checked::from_bytes};
 use glam::{Mat4, Vec3, vec3};
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, RenderPass, ShaderStages, TextureFormat, wgt::BufferDescriptor};
+use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, IndexFormat, RenderPass, ShaderStages, TextureFormat, wgt::{BufferDescriptor, CommandEncoderDescriptor, DrawIndexedIndirectArgs, DrawIndirectArgs}};
 
 use crate::{RES_SHADERS_PARTICLE_RENDERER_WGSL, game::ScreenInfo};
 
@@ -17,12 +17,17 @@ pub struct ParticleManager<'a> {
     pending_additions: Vec<Particle>,
     instances_buffer: Buffer,
     instances_bind_group: BindGroup,
-    num_instances: u32,
-    num_instances_output: ComputeOutput,
+    #[allow(unused)]
+    num_instances_buffer: Buffer,
+    num_instances_bind_group: BindGroup,
+    indirect_buffer: Buffer,
+    indirect_bind_group: BindGroup,
+    // async_num_instances_reader: AsyncU32Reader,
     particle_model: Model,
 
     update_shader: ComputeShader,
     instance_shader: ComputeShader,
+    indirect_setup_shader: ComputeShader,
     render_shader: Shader<'a>
 }
 
@@ -92,9 +97,39 @@ impl <'a> ParticleManager<'a> {
         let delta_seconds_uniform = UniformBinding::new(surface_ctx.device(), "Delta Seconds", 0.0, None);
 
         let num_instances_output = ComputeOutput::new(size_of::<u32>() as u64, &surface_ctx.device());
+        let num_instances_buffer = num_instances_output.buffer;
+        let num_instances_bind_group = num_instances_output.binding;
 
+        let indirect_buffer = surface_ctx.device().create_buffer(&BufferDescriptor {
+            label: Some("Particles instances buffer"),
+            mapped_at_creation: false,
+            size: size_of::<DrawIndexedIndirectArgs>() as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_DST | BufferUsages::INDIRECT,
+        });
+        let indirect_layout = surface_ctx.device().create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("Particles Indirect Layout"),
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    count: None,
+                    ty: BindingType::Buffer { ty: BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None },
+                    visibility: ShaderStages::COMPUTE | ShaderStages::VERTEX,
+                },
+            ]
+        });
+        let indirect_bind_group = surface_ctx.device().create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &indirect_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: indirect_buffer.as_entire_binding(),
+                },
+            ]
+        });
         let update_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_update_shader.wgsl"), vec![&particles_layout, &particles_layout, &delta_seconds_uniform.layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "Particle".into()), &delta_seconds_uniform.shader_type], vec![], surface_ctx.device());
         let instance_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_instance_shader.wgsl"), vec![&particles_layout, &particles_layout, &num_instances_output.layout], vec![&ShaderType::buffer_type(true, "Particle".into()), &ShaderType::buffer_type(true, "ParticleInstance".into())], vec![], surface_ctx.device());
+        let indirect_setup_shader = ComputeShader::new(&load_resource_string("res/shaders/particle_indirect_setup.wgsl"), vec![&num_instances_output.layout, &indirect_layout], vec![], vec![], surface_ctx.device());
         let render_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_PARTICLE_RENDERER_WGSL, formats: deferred_formats, uniforms: vec![screen_info_binding], vertex_buffers: vec![BasicVertex::desc(), ParticleInstance::desc()], ..Default::default() }, surface_ctx.device());
 
         let size = 0.1;
@@ -109,8 +144,14 @@ impl <'a> ParticleManager<'a> {
             instance_shader,
             instances_bind_group,
             delta_seconds_uniform,
-            num_instances: 0,
-            num_instances_output,
+            num_instances_bind_group,
+            num_instances_buffer,
+            indirect_bind_group,
+            indirect_buffer,
+            indirect_setup_shader,
+            // num_instances_bind_group,
+            // num_instances_buffer,
+            // async_num_instances_reader,
             particles_buffer,
             particles_bind_group,
             particles_buffer2,
@@ -136,17 +177,28 @@ impl <'a> ParticleManager<'a> {
             &self.particles2_bind_group
         };
         self.delta_seconds_uniform.set_data(surface_ctx.queue(), delta_time.as_secs_f32());
-        self.update_shader.run_once(vec![in_buffer, out_buffer, &self.delta_seconds_uniform.binding], [20; 3], surface_ctx.device(), surface_ctx.queue());
-        self.instance_shader.run_once(vec![&out_buffer, &self.instances_bind_group, &self.num_instances_output.binding], [20; 3], surface_ctx.device(), surface_ctx.queue());
-        self.num_instances = *bytemuck::from_bytes::<u32>(&self.num_instances_output.read(surface_ctx.device(), surface_ctx.queue()));
-        surface_ctx.queue().write_buffer(&self.num_instances_output.buffer, 0, &vec![0; self.num_instances_output.buffer.size() as usize]);
+        let mut encoder = surface_ctx.device().create_command_encoder(&CommandEncoderDescriptor::default());
+        self.update_shader.run(vec![in_buffer, out_buffer, &self.delta_seconds_uniform.binding], [20; 3], &mut encoder);
+        self.instance_shader.run(vec![&out_buffer, &self.instances_bind_group, &self.num_instances_bind_group], [20; 3], &mut encoder);
+        self.indirect_setup_shader.run(vec![&self.num_instances_bind_group, &self.indirect_bind_group], [1; 3], &mut encoder);
+        surface_ctx.queue().submit([encoder.finish()]);
+        // self.async_num_instances_reader.request_read(encoder, surface_ctx.queue(), &self.num_instances_buffer);
+        // if let Some(num_instances) = self.async_num_instances_reader.poll(surface_ctx.device()) {
+        //     self.num_instances = *bytemuck::from_bytes::<u32>(&num_instances);
+        // }
+        // self.num_instances = *bytemuck::from_bytes::<u32>(&self.num_instances_output.read_with(encoder, surface_ctx.device(), surface_ctx.queue()));
+        // self.num_instances_output = ComputeOutput::new(self.num_instances_output.buffer.size(), surface_ctx.device());
+        // surface_ctx.queue().write_buffer(&self.num_instances_output.buffer, 0, &vec![0; self.num_instances_output.buffer.size() as usize]);
         self.flip = !self.flip;
     }
 
-    pub fn render<'s: 'b, 'b>(&'s mut self, screen_info_binding: &UniformBinding<ScreenInfo>, render_pass: &mut RenderPass<'b>) {
+    pub fn render<'s: 'b, 'b>(&'s self, screen_info_binding: &UniformBinding<ScreenInfo>, render_pass: &mut RenderPass<'b>) {
         self.render_shader.bind(render_pass);
         render_pass.set_bind_group(0, &screen_info_binding.binding, &[]);
-        self.particle_model.render_instances(render_pass, &self.instances_buffer, 0..self.num_instances);
+        render_pass.set_vertex_buffer(0, self.particle_model.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, self.instances_buffer.slice(..));
+        render_pass.set_index_buffer(self.particle_model.index_buffer.slice(..), IndexFormat::Uint16);
+        render_pass.draw_indexed_indirect(&self.indirect_buffer, 0);
     }
 
     pub fn add_particle(&mut self, particle: Particle) {

@@ -8,5 +8,6 @@
     "substitutions": {
         "C": "cobblestone_block",
         "K": "kiln_block"
-    }
+    },
+    "crafting_type": "player_crafting"
 }

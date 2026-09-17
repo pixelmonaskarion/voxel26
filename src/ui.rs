@@ -3,7 +3,7 @@ use bytemuck::{NoUninit, bytes_of};
 use glam::{IVec3, Vec2, vec2};
 use wgpu_text::glyph_brush::{HorizontalAlign, Layout, OwnedSection, OwnedText, VerticalAlign};
 
-use crate::{chunk::ChunkManager, game::Game, inventory::{Inventory, ItemStack}};
+use crate::{game::Game, inventory::{Inventory, ItemStack}};
 
 const ATLAS_X_BLOCKS: u32 = 16;
 const ATLAS_Y_BLOCKS: u32 = 16;

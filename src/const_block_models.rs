@@ -1,85 +1,7 @@
-use std::{fmt::Debug, fs::read, path::PathBuf};
-
-use bespoke_engine::{binding::Descriptor, model::ToRaw, resource_compiler::Atlas, resource_loader::{ResourceConst, const_name}};
-use bytemuck::{NoUninit, bytes_of};
-use glam::{IVec3, Vec3, vec2, vec3};
+use std::{fs::read, path::PathBuf};
+use glam::{IVec3, vec2};
 use serde::Deserialize;
-
-#[repr(C)]
-#[derive(NoUninit, Copy, Clone, Debug, PartialEq)]
-pub struct Vertex {
-    pub position: [f32; 4],
-    pub color: [f32; 4],
-    pub normal: [f32; 4],
-}
-
-impl Vertex {
-    #[allow(dead_code)]
-    pub fn pos(&self) -> Vec3 {
-        return vec3(self.position[0], self.position[1], self.position[2]);
-    }
-}
-
-impl Descriptor for Vertex {
-    fn desc<'a>() -> Option<wgpu::VertexBufferLayout<'a>> {
-        use std::mem;
-        Some(wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-            ],
-        })
-    }
-}
-
-impl ToRaw for Vertex {
-    fn to_raw(&self) -> Vec<u8> {
-        bytes_of(self).to_vec()
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct BlockModel {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ConstBlockModel<const V: usize, const I: usize> {
-    pub vertices: [Vertex; V],
-    pub indices: [u32; I],
-}
-
-pub trait BlockModelTrait: Debug + Sync {
-    fn vertices(&self) -> &[Vertex];
-    fn indices(&self) -> &[u32];
-}
-
-impl<const V: usize, const I: usize> BlockModelTrait for ConstBlockModel<V, I> {
-    fn vertices(&self) -> &[Vertex] { &self.vertices }
-    fn indices(&self) -> &[u32] { &self.indices }
-}
-
-impl<const V: usize, const I: usize> AsRef<dyn BlockModelTrait + 'static> for ConstBlockModel<V, I> {
-    fn as_ref(&self) -> &(dyn BlockModelTrait + 'static) {
-        self
-    }
-}
+use bespoke_engine::{resource_compiler::Atlas, resource_loader::{ResourceConst, const_name}};
 
 pub fn parse_model(file_contents: Vec<u8>, block_atlas: &Atlas) -> BlockModel {
     let definition_json = String::from_utf8(file_contents).unwrap();
@@ -303,9 +225,9 @@ pub fn generate_models(rg: &mut bespoke_engine::resource_loader::ResourceGenerat
     for file in files {
         let file_contents = read(&file).unwrap();
         let BlockModel { vertices, indices } = parse_model(file_contents, &block_atlas);
-        let vertex_qualified_name = "crate::const_block_models::Vertex";
-        let const_block_model_qualified_name = "crate::const_block_models::ConstBlockModel";
-        let block_model_trait_qualified_name = "dyn crate::const_block_models::BlockModelTrait";
+        let vertex_qualified_name = "crate::const_block_model_types::Vertex";
+        let const_block_model_qualified_name = "crate::const_block_model_types::ConstBlockModel";
+        let block_model_trait_qualified_name = "dyn crate::const_block_model_types::BlockModelTrait";
         let vertices_string: String = vertices.into_iter().map(|vertex| format!("{vertex_qualified_name} {{ position: {:?}, color: {:?}, normal: {:?} }}, ", vertex.position, vertex.color, vertex.normal)).collect();
         let indices_string: String = indices.into_iter().map(|index| format!("{index}, ")).collect();
         let model_string = format!("&{const_block_model_qualified_name} {{ vertices: [{vertices_string}], indices: [{indices_string}] }}");
@@ -339,12 +261,4 @@ struct ModelFaces {
 struct ModelFace {
     uv: [i32; 4],
     texture: String,
-}
-
-#[derive(Deserialize)]
-#[allow(unused)]
-struct ModelRotation {
-    angle: f32,
-    axis: String,
-    origin: [f32; 3],
 }

@@ -1,0 +1,9 @@
+{
+    "pattern": ["O"],
+    "result": "I",
+    "substitutions": {
+        "I": "copper_ingot",
+        "O": "crushed_copper_ore"
+    },
+    "crafting_type": "kiln"
+}

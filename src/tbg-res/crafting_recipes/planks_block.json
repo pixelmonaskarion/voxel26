@@ -1,8 +1,6 @@
 {
     "pattern": [
-        "   ",
-        " W ",
-        "   "
+        "W"
     ],
     "result": "P",
     "substitutions": {
@@ -11,5 +9,6 @@
             "id": "planks_block",
             "count": 4
         }
-    }
+    },
+    "crafting_type": "player_crafting"
 }

@@ -1,26 +1,28 @@
 use std::{collections::HashMap, f32::consts::PI, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::{AABB, vec3_mul_elements}, model::{Model, Render}, resource_loader::{ResourceConst, load_resource, load_resource_string}, shader::{PostProcessShaderInit, Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, texture::{DepthTexture, Texture, TextureLayoutConfig}, window::{BasicVertex, MULTISAMPLE_COUNT, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
+use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::{AABB, vec3_mul_elements}, model::{Model, Render}, resource_loader::{ResourceConst, load_resource, load_resource_string}, shader::{PostProcessShaderInit, Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, texture::{Texture, TextureLayoutConfig}, window::{BasicVertex, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
 use bytemuck::{NoUninit, Pod, Zeroable, bytes_of};
 use glam::{IVec3, UVec2, Vec2, Vec3, ivec3, vec2, vec3};
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
-use wgpu::{Color, CommandEncoder, Features, Limits, RenderPass, TextureFormat, wgt::CommandEncoderDescriptor};
+use wgpu::{Color, CommandEncoder, Features, Limits, RenderPass, RenderPassDepthStencilAttachment, TextureFormat, TextureView, wgt::CommandEncoderDescriptor};
 use wgpu_text::{BrushBuilder, TextBrush, glyph_brush::{HorizontalAlign, Layout, OwnedSection, OwnedText, VerticalAlign, ab_glyph::FontVec}};
 use winit::{dpi::PhysicalPosition, event::{KeyEvent, Modifiers, MouseButton, TouchPhase, WindowEvent}, keyboard::{KeyCode, PhysicalKey::Code}};
-use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, RES_SHADERS_BLUR_WGSL, RES_SHADERS_CHUNK_WGSL, RES_SHADERS_DEFERRED_COMBINE_WGSL, RES_SHADERS_ITEM_UI_WGSL, RES_SHADERS_POST_PROCESS_WGSL, RES_SHADERS_SSAO_WGSL, RES_SHADERS_UI_WGSL, RESOURCES, block_states::KilnBlockState, blocks::{self, AIR}, chunk::{CHUNK_SIZE, ChunkManager, NeededChunkUpdate, index_in_chunk}, const_block_models::Vertex, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, game_serializer::{GameSerializer, WorldInfo}, inventory::{Inventory, InventoryInteraction, ItemStack, cursor_stack_interaction}, items::{self, ItemProperties}, particles::{Particle, ParticleManager, ParticleType}, player::Player, registries::Registries, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, ui::{InventoryModel, OpenInventory, OpenInventoryLocation, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, inventory_location, inventory_physical_size, mouse_tile_coords}, util::{self, chunk_for_block_position, chunk_for_world_position}};
+use crate::{BLOCK_ATLAS_PNG_DIRT_SECTION, BLOCK_ATLAS_PNG_HEIGHT, BLOCK_ATLAS_PNG_WIDTH, RES_SHADERS_BLUR_WGSL, RES_SHADERS_CHUNK_WGSL, RES_SHADERS_DEFERRED_COMBINE_WGSL, RES_SHADERS_DEFERRED_PROCESS_WGSL, RES_SHADERS_ITEM_UI_WGSL, RES_SHADERS_POST_PROCESS_WGSL, RES_SHADERS_SSAO_WGSL, RES_SHADERS_UI_WGSL, RESOURCES, block_states::KilnBlockState, blocks::{self, AIR, SEMITRANSPARENT_LAYER, SOLID_LAYER, TRANSPARENT_LAYER}, chunk::{CHUNK_SIZE, ChunkManager, NeededChunkUpdate, index_in_chunk}, const_block_model_types::Vertex, cube_outline::{cube_outline_model, cube_outline_shader}, entity::{Entity, EntityRenderManager, EntityType, TypedEntity}, game_serializer::{GameSerializer, WorldInfo}, inventory::{Inventory, InventoryInteraction, ItemStack, cursor_stack_interaction}, items::{self, ItemProperties}, particles::{Particle, ParticleManager, ParticleType}, player::Player, registries::Registries, ssao::{SSAOKernelSamples, generate_random_texture, generate_ssao_kernel_samples}, texture_types::TextureLayer, ui::{InventoryModel, OpenInventory, OpenInventoryLocation, UIVertex, create_inventory_model, generate_crosshair_ui_model, generate_health_ui_models, generate_hotbar_background_ui_models, generate_hotbar_item_ui_models, hotbar_item_height, inventory_location, inventory_physical_size, mouse_tile_coords}, util::{self, chunk_for_block_position, chunk_for_world_position}};
 
 const BLUR_STEPS: i32 = 11;
 
 pub struct Game<'a> {
-    pub deferred_color_output: UniformBinding<Texture>,
-    pub deferred_normal_output: UniformBinding<Texture>,
+    pub deferred_output1: UniformBinding<TextureLayer>,
+    pub deferred_output2: UniformBinding<TextureLayer>,
+    pub deferred_combined_output1: UniformBinding<TextureLayer>,
+    pub deferred_combined_output2: UniformBinding<TextureLayer>,
     pub deferred_normal_resolve: UniformBinding<Texture>,
-    pub deferred_worldspace_output: UniformBinding<Texture>,
     pub deferred_worldspace_resolve: UniformBinding<Texture>,
     pub deferred_ssao_output: UniformBinding<Texture>,
     pub intermediate_ssao_texture: UniformBinding<Texture>,
-    pub deferred_depth_texture: UniformBinding<DepthTexture>,
+    // pub deferred_depth_texture: UniformBinding<DepthTexture>,
+    pub deferred_process_shader: Shader<'a>,
     pub deferred_combine_shader: Shader<'a>,
     pub ssao_shader: Shader<'a>,
     pub ssao_blur_shader: Shader<'a>,
@@ -83,18 +85,21 @@ impl <'a> Game<'a> {
     pub fn new(surface_ctx: &dyn SurfaceCtx) -> Self {
         let deferred_data_format = TextureFormat::Rgba16Float;
         let ssao_format = TextureFormat::Rgba16Float;
-        let deferred_normal_output = UniformBinding::new(surface_ctx.device(), "Deferred Normal Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
-        let deferred_normal_resolve = UniformBinding::new(surface_ctx.device(), "Deferred Normal Resolve", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, 1), None);
-        let deferred_color_output = UniformBinding::new(surface_ctx.device(), "Deferred Color Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, surface_ctx.config().format, MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
-        let deferred_worldspace_output = UniformBinding::new(surface_ctx.device(), "Deferred Worldspace Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
-        let deferred_worldspace_resolve = UniformBinding::new(surface_ctx.device(), "Deferred Worldspace Resolve", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, 1), None);
-        let deferred_depth_texture = UniformBinding::new(surface_ctx.device(), "Deferred Depth Texture", DepthTexture::create_depth_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, "Deferred", MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
-        let intermediate_ssao_texture = UniformBinding::new(surface_ctx.device(), "Intermediate SSAO Texture", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, ssao_format, 1), None);
-        let deferred_ssao_output = UniformBinding::new(surface_ctx.device(), "Deferred SSAO Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, ssao_format, 1), None);
-        let deferred_formats = vec![surface_ctx.config().format, deferred_data_format, deferred_data_format];
+        let deferred_solid_output = UniformBinding::new(surface_ctx.device(), "Deferred Solid Output", TextureLayer::new(deferred_data_format, surface_ctx), None);
+        let deferred_transparent_output = UniformBinding::new(surface_ctx.device(), "Deferred Transparent Output", TextureLayer::new(deferred_data_format, surface_ctx), None);
+        let deferred_combined_output1 = UniformBinding::new(surface_ctx.device(), "Deferred Combined Output 1", TextureLayer::new(deferred_data_format, surface_ctx), None);
+        let deferred_combined_output2 = UniformBinding::new(surface_ctx.device(), "Deferred Combined Output 2", TextureLayer::new(deferred_data_format, surface_ctx), None);
+        let deferred_normal_resolve = UniformBinding::new(surface_ctx.device(), "Deferred Normal Resolve", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, 1, None, None), None);
+        // let deferred_color_output = UniformBinding::new(surface_ctx.device(), "Deferred Color Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, surface_ctx.config().format, MULTISAMPLE_COUNT.lock().unwrap().clone(), None, None), None);
+        // let deferred_worldspace_output = UniformBinding::new(surface_ctx.device(), "Deferred Worldspace Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, MULTISAMPLE_COUNT.lock().unwrap().clone(), None, None), None);
+        let deferred_worldspace_resolve = UniformBinding::new(surface_ctx.device(), "Deferred Worldspace Resolve", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, deferred_data_format, 1, None, None), None);
+        // let deferred_depth_texture = UniformBinding::new(surface_ctx.device(), "Deferred Depth Texture", DepthTexture::create_depth_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, "Deferred", MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
+        let intermediate_ssao_texture = UniformBinding::new(surface_ctx.device(), "Intermediate SSAO Texture", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, ssao_format, 1, Some(wgpu::AddressMode::ClampToEdge), None), None);
+        let deferred_ssao_output = UniformBinding::new(surface_ctx.device(), "Deferred SSAO Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, ssao_format, 1, Some(wgpu::AddressMode::ClampToEdge), None), None);
+               let deferred_formats = vec![surface_ctx.config().format, deferred_data_format, deferred_data_format];
 
         let ssao_kernel_samples = UniformBinding::new(surface_ctx.device(), "SSAO Kernel Samples", generate_ssao_kernel_samples(), None);
-        let random_texture = UniformBinding::new(surface_ctx.device(), "Random Texture", generate_random_texture(surface_ctx, 64, 64, TextureFormat::Rgba32Float), None);
+        let random_texture = UniformBinding::new(surface_ctx.device(), "Random Texture", generate_random_texture(surface_ctx, 64, 64, TextureFormat::Rgba16Float), None);
 
         let screen_size = [surface_ctx.size().0 as f32, surface_ctx.size().1 as f32];
         let camera = Camera {
@@ -107,7 +112,8 @@ impl <'a> Game<'a> {
             sky: 0.0,
         };
         let screen_info_binding = UniformBinding::new(surface_ctx.device(), "Screen Info", ScreenInfo::new(screen_size, 0.0, camera.to_raw()), None);
-        let deferred_combine_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_DEFERRED_COMBINE_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&deferred_color_output, &deferred_normal_output, &deferred_worldspace_output, surface_ctx.depth_texture(), &deferred_ssao_output, &screen_info_binding], vertex_buffers: vec![BasicVertex::desc()], depth_compare: wgpu::CompareFunction::Always,  ..Default::default() }, surface_ctx.device());
+        let deferred_process_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_DEFERRED_PROCESS_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&deferred_solid_output, &deferred_ssao_output, &screen_info_binding], vertex_buffers: vec![BasicVertex::desc()], depth_compare: wgpu::CompareFunction::Always,  ..Default::default() }, surface_ctx.device());
+        let deferred_combine_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_DEFERRED_COMBINE_WGSL, formats: deferred_formats.clone(), uniforms: vec![&deferred_solid_output, &deferred_solid_output, &screen_info_binding], vertex_buffers: vec![BasicVertex::desc()], enable_depth_texture: true,  ..Default::default() }, surface_ctx.device());
         let ssao_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_SSAO_WGSL, formats: vec![ssao_format], uniforms: vec![&deferred_normal_resolve, &deferred_worldspace_resolve, &screen_info_binding, &ssao_kernel_samples, &random_texture], vertex_buffers: vec![BasicVertex::desc()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
         
         let blur_steps = UniformBinding::new(surface_ctx.device(), "Blur Steps", BLUR_STEPS, None);
@@ -133,7 +139,7 @@ impl <'a> Game<'a> {
         let shader_atlas_x_ui = ResourceConst { name: "ATLAS_X_BLOCKS".into(), rtype: "u32".into(), value: 16.to_string() };
         let shader_atlas_y_ui  = ResourceConst { name: "ATLAS_Y_BLOCKS".into(), rtype: "u32".into(), value: 16.to_string() };
 
-        let post_processing_shader = Shader::new(PostProcessShaderInit { resource: RES_SHADERS_POST_PROCESS_WGSL, formats: vec![surface_ctx.config().format], binding_layouts: vec![create_layout::<Texture>(TextureLayoutConfig::default(), surface_ctx.device())], shader_types: vec![Texture::shader_type(TextureLayoutConfig::default())], ..Default::default() }, surface_ctx.device());
+        let post_processing_shader = Shader::new(PostProcessShaderInit { resource: RES_SHADERS_POST_PROCESS_WGSL, formats: vec![surface_ctx.config().format], binding_layouts: vec![create_layout::<Texture>(&TextureLayoutConfig::default(), surface_ctx.device())], shader_types: vec![Texture::shader_type(&TextureLayoutConfig::default())], ..Default::default() }, surface_ctx.device());
         
         let chunk_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_CHUNK_WGSL, formats: deferred_formats.clone(), uniforms: vec![&screen_info_binding, &registries.block_atlas_texture], vertex_buffers: vec![Vertex::desc()], shader_consts: vec![shader_atlas_x_blocks.clone(), shader_atlas_y_blocks.clone()], line_mode: wgpu::PolygonMode::Fill, ..Default::default() }, surface_ctx.device());
 
@@ -143,7 +149,7 @@ impl <'a> Game<'a> {
         let hotbar_item_ui_models = generate_hotbar_item_ui_models(surface_ctx);
         let hotbar_background_ui_models = generate_hotbar_background_ui_models(surface_ctx, 0);
         let health_ui_models = generate_health_ui_models(surface_ctx, 20.0);
-        let ui_texture_uniform = UniformBinding::new(surface_ctx.device(), "UI Textures", Texture::from_bytes(surface_ctx.device(), surface_ctx.queue(), &load_resource("res/ui.png").unwrap(), "UI", None, None).unwrap(), None);
+        let ui_texture_uniform = UniformBinding::new(surface_ctx.device(), "UI Textures", Texture::from_bytes(surface_ctx, &load_resource("res/ui.png").unwrap(), "UI", None, None).unwrap(), None);
         let ui_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_UI_WGSL, formats: vec![surface_ctx.config().format], uniforms: vec![&ui_texture_uniform], vertex_buffers: vec![UIVertex::desc()], shader_consts: vec![shader_atlas_x_ui.clone(), shader_atlas_y_ui.clone()], enable_depth_texture: false, multisample_count: 1, ..Default::default() }, surface_ctx.device());
         let hotbar_atlas_subsections_uniform = UniformBinding::new(surface_ctx.device(), "Atlas Subsection", DynamicOffsetUniform { values: [[0.0; 4]; 9], alignment: surface_ctx.device().limits().min_uniform_buffer_offset_alignment as usize }, None);
         
@@ -160,14 +166,16 @@ impl <'a> Game<'a> {
         let cursor_stack_subsection_uniform = UniformBinding::new(surface_ctx.device(), "Cursor Stack Subsection", DynamicOffsetUniform { values: [[0.0; 4]], alignment: surface_ctx.device().limits().min_uniform_buffer_offset_alignment as usize }, None);
 
         let mut _self = Self {
-            deferred_color_output,
-            deferred_normal_output,
+            deferred_output1: deferred_solid_output,
+            deferred_output2: deferred_transparent_output,
             deferred_normal_resolve,
-            deferred_worldspace_output,
             deferred_worldspace_resolve,
+            deferred_combined_output1,
+            deferred_combined_output2,
             intermediate_ssao_texture,
             deferred_ssao_output,
-            deferred_depth_texture,
+            // deferred_depth_texture,
+            deferred_process_shader,
             deferred_combine_shader,
             ssao_shader,
             ssao_blur_shader,
@@ -178,7 +186,7 @@ impl <'a> Game<'a> {
             ssao_kernel_samples,
             random_texture,
             world_info,
-            player: Player::new(vec3(0.0, 20.0, 0.0), camera),
+            player: Player::new(vec3(0.0, 200.0, 0.0), camera),
             screen_size,
             mouse_coords: vec2(0.0, 0.0),
             screen_info_binding,
@@ -240,13 +248,15 @@ impl <'s> WindowHandler for Game<'s> {
         self.crosshair_model = generate_crosshair_ui_model(surface_ctx);
         self.hotbar_background_ui_models = generate_hotbar_background_ui_models(surface_ctx, self.player.inventory.selected);
         self.text_brush.resize_view(surface_ctx.config().width as f32, surface_ctx.config().height as f32, surface_ctx.queue());
-        self.deferred_normal_output.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_normal_output.value.format, MULTISAMPLE_COUNT.lock().unwrap().clone()));
-        self.deferred_normal_resolve.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_normal_resolve.value.format, 1));
-        self.deferred_color_output.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_color_output.value.format, MULTISAMPLE_COUNT.lock().unwrap().clone()));
-        self.deferred_worldspace_output.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_worldspace_output.value.format, MULTISAMPLE_COUNT.lock().unwrap().clone()));
-        self.deferred_worldspace_resolve.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_worldspace_resolve.value.format, 1));
-        self.deferred_ssao_output.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_ssao_output.value.format, 1));
-        self.deferred_depth_texture.replace_data(surface_ctx.device(), DepthTexture::create_depth_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, "Deferred", MULTISAMPLE_COUNT.lock().unwrap().clone()));
+        self.deferred_output1.replace_data(surface_ctx.device(), TextureLayer::new(self.deferred_output1.value.normal.format, surface_ctx));
+        self.deferred_output2.replace_data(surface_ctx.device(), TextureLayer::new(self.deferred_output2.value.normal.format, surface_ctx));
+        self.deferred_combined_output1.replace_data(surface_ctx.device(), TextureLayer::new(self.deferred_combined_output1.value.normal.format, surface_ctx));
+        self.deferred_combined_output2.replace_data(surface_ctx.device(), TextureLayer::new(self.deferred_combined_output2.value.normal.format, surface_ctx));
+        self.deferred_normal_resolve.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_normal_resolve.value.format, 1, None, None));
+        self.deferred_worldspace_resolve.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_worldspace_resolve.value.format, 1, None, None));
+        self.deferred_ssao_output.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.deferred_ssao_output.value.format, 1, Some(wgpu::AddressMode::ClampToEdge), None));
+        self.intermediate_ssao_texture.replace_data(surface_ctx.device(), Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, self.intermediate_ssao_texture.value.format, 1, Some(wgpu::AddressMode::ClampToEdge), None));
+        // self.deferred_depth_texture.replace_data(surface_ctx.device(), DepthTexture::create_depth_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, "Deferred", MULTISAMPLE_COUNT.lock().unwrap().clone()));
         self.blur_radius.set_data(surface_ctx.queue(), [1.0 / new_size.x as f32, 1.0 / new_size.y as f32]);
     }
 
@@ -256,17 +266,23 @@ impl <'s> WindowHandler for Game<'s> {
         self.update_all_chunks(surface_ctx, delta);
         self.update_render_setup(surface_ctx, delta);
         self.update_clean_up(surface_ctx, delta);
-        self.update_render_deferred(surface_ctx, delta);
+        let mut encoder = surface_ctx.device().create_command_encoder(&CommandEncoderDescriptor::default());
+        self.setup_render_deferred(surface_ctx, &self.deferred_output1.value, SOLID_LAYER, false, &mut encoder, delta);
+        self.setup_render_deferred(surface_ctx, &self.deferred_output2.value, SEMITRANSPARENT_LAYER, false, &mut encoder, delta);
+        self.combine_deferred(&self.deferred_output1, &self.deferred_output2, Some(&self.deferred_normal_resolve.value.view), Some(&self.deferred_worldspace_resolve.value.view), &self.deferred_combined_output1.value, &mut encoder, surface_ctx);
+        self.render_ssao(&mut encoder, surface_ctx);
+        self.setup_render_deferred(surface_ctx, &self.deferred_output1.value, TRANSPARENT_LAYER, false, &mut encoder, delta);
+        self.combine_deferred(&self.deferred_output1, &self.deferred_combined_output1, None, None, &self.deferred_combined_output2.value, &mut encoder, surface_ctx);
+        surface_ctx.queue().submit([encoder.finish()]);
+
     }
 
     fn render<'a: 'b, 'b>(&'a mut self, surface_ctx: &'b dyn SurfaceCtx, render_pass: &mut RenderPass<'b>) {
-        self.deferred_combine_shader.bind(render_pass);
-        render_pass.set_bind_group(0, &self.deferred_color_output.binding, &[]);
-        render_pass.set_bind_group(1, &self.deferred_normal_output.binding, &[]);
-        render_pass.set_bind_group(2, &self.deferred_worldspace_output.binding, &[]);
-        render_pass.set_bind_group(3, &self.deferred_depth_texture.binding, &[]);
-        render_pass.set_bind_group(4, &self.deferred_ssao_output.binding, &[]);
-        render_pass.set_bind_group(5, &self.screen_info_binding.binding, &[]);
+        self.deferred_process_shader.bind(render_pass);
+        render_pass.set_bind_group(0, &self.deferred_combined_output2.binding, &[]);
+        // render_pass.set_bind_group(1, &self.deferred_depth_texture.binding, &[]);
+        render_pass.set_bind_group(1, &self.deferred_ssao_output.binding, &[]);
+        render_pass.set_bind_group(2, &self.screen_info_binding.binding, &[]);
         surface_ctx.screen_model().render(render_pass);
     }
 
@@ -314,7 +330,7 @@ impl <'s> WindowHandler for Game<'s> {
         if let Code(KeyCode::KeyR) = input_event.physical_key {
             self.chunk_shader.reload_source(surface_ctx.device());
             self.cube_outline_shader.reload_source(surface_ctx.device());
-            self.deferred_combine_shader.reload_source(surface_ctx.device());
+            self.deferred_process_shader.reload_source(surface_ctx.device());
             self.ssao_shader.reload_source(surface_ctx.device());
             self.item_ui_shader.reload_source(surface_ctx.device());
             self.post_processing_shader.reload_source(surface_ctx.device());
@@ -453,7 +469,11 @@ impl <'s> WindowHandler for Game<'s> {
 impl <'s> Game<'s> {
     fn update_user_input(&mut self, surface_ctx: &dyn SurfaceCtx, delta: Duration) {
         // let max_speed = 4.317; //walking
-        let max_speed = 5.612; //running
+        let max_speed = if self.player.movement_mode == 1 {
+            15.0
+        } else {
+            5.612 //running
+        };
         let speed = max_speed * 12.08324875059 * delta.as_secs_f32(); //coefficient found experimentally on desmos because I forgot calculus
         let mut movement = vec3(0.0, 0.0, 0.0);
         if self.keys_down.contains(&KeyCode::KeyW) || self.moving_bc_finger.is_some() {
@@ -501,15 +521,14 @@ impl <'s> Game<'s> {
                     if let Some((coordinate, face)) = self.player.raycast(self.player.camera.get_forward_vec(), 6.0, &self.chunk_manager, &self.registries) {
                         if self.chunk_manager.get_block(coordinate) == blocks::KILN {
                             self.open_inventory(OpenInventory::KilnBlockState(coordinate, Inventory::empty_size(0)), surface_ctx);
-                        }
-                        if let ItemProperties::BlockItem(block_item) = self.registries.item_registry.get_item(&self.player.inventory.selected_item().item).properties && block_item.block != AIR {
+                        } else if let ItemProperties::BlockItem(block_item) = self.registries.item_registry.get_item(&self.player.inventory.selected_item().item).properties && block_item.block != AIR {
                             let coordinate = IVec3::from(coordinate)+face.direction();
                             let before = self.chunk_manager.get_block(coordinate);
                             let before_state = self.chunk_manager.get_block_state(coordinate).cloned();
                             let state = self.registries.block_state_registry.get_state_provider(block_item.block).map(|it| it.new_state(coordinate, &mut self.chunk_manager));
-                            self.chunk_manager.set_block(coordinate, block_item.block, state, true);
+                            self.chunk_manager.set_block(coordinate, block_item.block, state, true, &self.registries);
                             if self.player.colliding_world(&self.chunk_manager, &self.registries) {
-                                self.chunk_manager.set_block(coordinate, before, before_state, true);
+                                self.chunk_manager.set_block(coordinate, before, before_state, true, &self.registries);
                             } else {
                                 *self.player.inventory.selected_item_mut() -= 1;
                             }
@@ -525,7 +544,7 @@ impl <'s> Game<'s> {
                             let before = self.chunk_manager.get_block(coordinate);
                             let before_block = self.registries.block_registry.get_block(&before);
                             if self.player.break_progress > before_block.break_duration {
-                                self.chunk_manager.set_block(coordinate, AIR, None, true);
+                                self.chunk_manager.set_block(coordinate, AIR, None, true, &self.registries);
                                 for _ in 0..10 {
                                     self.particle_manager.add_particle(Particle {
                                         particle_type: ParticleType::BlockBreak,
@@ -592,6 +611,9 @@ impl <'s> Game<'s> {
         }
         if any {
             self.hotbar_background_ui_models = generate_hotbar_background_ui_models(surface_ctx, self.player.inventory.selected);
+        }
+        if self.keys_down.contains(&KeyCode::Equal) {
+            self.player.inventory.add(&ItemStack::new(items::GOLD_BLOCK.into(), 1));
         }
 
         //inventory stuff
@@ -695,7 +717,7 @@ impl <'s> Game<'s> {
                 let block = self.chunk_manager.get_chunk_or_create(pos).data.blocks[index_in_chunk(state_position.x, state_position.y, state_position.z)];
                 let world_pos = state_position.as_ivec3()+pos*CHUNK_SIZE as i32;
                 if let Some(provider) = self.registries.block_state_registry.get_state_provider(block) {
-                    provider.update(&mut state_data, world_pos, &mut self.chunk_manager, delta);
+                    provider.update(&mut state_data, world_pos, &mut self.chunk_manager, &self.registries, delta);
                 } else {
                     println!("no provider for state at pos: {world_pos:?}");
                 }
@@ -747,7 +769,7 @@ impl <'s> Game<'s> {
                 }
             }
         }
-        self.chunk_manager.poll_channels(self.player.position.into());
+        self.chunk_manager.poll_channels(self.player.position.into(), &self.registries);
     }
 
     fn update_render_setup(&mut self, surface_ctx: &dyn SurfaceCtx, delta: Duration) {
@@ -838,15 +860,24 @@ impl <'s> Game<'s> {
         self.new_mouse_down = vec![];
     }
 
-    fn update_render_deferred(&mut self, surface_ctx: &dyn SurfaceCtx, _delta: Duration) {
-        let mut encoder = surface_ctx.device().create_command_encoder(&CommandEncoderDescriptor::default());
+    fn setup_render_deferred(&self, surface_ctx: &dyn SurfaceCtx, output: &TextureLayer, layer_index: usize, resolve: bool, encoder: &mut CommandEncoder, _delta: Duration) {
+        let resolve_normal = if resolve {
+            Some(&self.deferred_normal_resolve.value.view)
+        } else {
+            None
+        };
+        let resolve_worldspace = if resolve {
+            Some(&self.deferred_worldspace_resolve.value.view)
+        } else {
+            None
+        };
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Deferred Render Pass"),
                 color_attachments: &[
                     Some(wgpu::RenderPassColorAttachment {
                         resolve_target: None,
-                        view: &self.deferred_color_output.value.view,
+                        view: &output.color.view,
                         depth_slice: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(Color::TRANSPARENT),
@@ -854,8 +885,8 @@ impl <'s> Game<'s> {
                         },
                     }),
                     Some(wgpu::RenderPassColorAttachment {
-                        resolve_target: Some(&self.deferred_normal_resolve.value.view),
-                        view: &self.deferred_normal_output.value.view,
+                        resolve_target: resolve_normal,
+                        view: &output.normal.view,
                         depth_slice: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(Color::TRANSPARENT),
@@ -863,8 +894,8 @@ impl <'s> Game<'s> {
                         },
                     }),
                     Some(wgpu::RenderPassColorAttachment {
-                        resolve_target: Some(&self.deferred_worldspace_resolve.value.view),
-                        view: &self.deferred_worldspace_output.value.view,
+                        resolve_target: resolve_worldspace,
+                        view: &output.worldspace.view,
                         depth_slice: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(Color::TRANSPARENT),
@@ -876,7 +907,7 @@ impl <'s> Game<'s> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.deferred_depth_texture.value.view,
+                    view: &output.depth.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -884,8 +915,11 @@ impl <'s> Game<'s> {
                     stencil_ops: None,
                 }),
             });
-            self.render_deferred(surface_ctx, &mut render_pass);
+            self.render_deferred(surface_ctx, &mut render_pass, layer_index);
         }
+    }
+
+    fn render_ssao(&mut self, encoder: &mut CommandEncoder, surface_ctx: &dyn SurfaceCtx) {
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSAO Render Pass"),
@@ -915,30 +949,82 @@ impl <'s> Game<'s> {
         }
         for _ in 0..3 {
             self.blur_axis.set_data(surface_ctx.queue(), [1.0, 0.0]);
-            self.blur_ssao(surface_ctx, &mut encoder);
+            self.blur_ssao(surface_ctx, encoder);
             self.blur_axis.set_data(surface_ctx.queue(), [0.0, 1.0]);
-            self.blur_ssao(surface_ctx, &mut encoder);
+            self.blur_ssao(surface_ctx, encoder);
         }
-        surface_ctx.queue().submit([encoder.finish()]);
     }
 
-    fn render_deferred<'a: 'b, 'b>(&'a mut self, surface_ctx: &'b dyn SurfaceCtx, render_pass: &mut RenderPass<'b>) {
+    fn combine_deferred(&self, layer_a: &UniformBinding<TextureLayer>, layer_b: &UniformBinding<TextureLayer>, resolve_normal: Option<&TextureView>, resolve_worldspace: Option<&TextureView>, combined_layer: &TextureLayer, encoder: &mut CommandEncoder, surface_ctx: &dyn SurfaceCtx) {
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Deferred Render Pass"),
+                color_attachments: &[
+                    Some(wgpu::RenderPassColorAttachment {
+                        resolve_target: None,
+                        view: &combined_layer.color.view,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        resolve_target: resolve_normal,
+                        view: &combined_layer.normal.view,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        resolve_target: resolve_worldspace,
+                        view: &combined_layer.worldspace.view,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                ],
+                multiview_mask: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                    view: &combined_layer.depth.view,
+                }),
+            });
+            render_pass.set_bind_group(0, &layer_a.binding, &[]);
+            render_pass.set_bind_group(1, &layer_b.binding, &[]);
+            render_pass.set_bind_group(2, &self.screen_info_binding.binding, &[]);
+            self.deferred_combine_shader.bind(&mut render_pass);
+            surface_ctx.screen_model().render(&mut render_pass);
+        }
+        
+    }
+
+    fn render_deferred<'a: 'b, 'b>(&'a self, surface_ctx: &'b dyn SurfaceCtx, render_pass: &mut RenderPass<'b>, layer_index: usize) {
         self.chunk_shader.bind(render_pass);
         render_pass.set_bind_group(0, &self.screen_info_binding.binding, &[]);
         render_pass.set_bind_group(1, &self.registries.block_atlas_texture.binding, &[]);
-        for chunk in self.chunk_manager.chunks_sorted(self.player.camera.eye.into()) {
-            if chunk.visible() {
-                //TODO: move camera stuff out of particle manager
-                chunk.render(render_pass, &self.entity_render_manager, &self.registries, &self.chunk_shader, surface_ctx);
+        let view_proj = self.player.camera.build_view_projection_matrix();
+        for (_, chunk) in self.chunk_manager.chunks() {//_sorted(self.player.camera.eye.into()) {
+            if chunk.visible(&self.player.camera, view_proj) {
+                chunk.render(render_pass, layer_index, &self.entity_render_manager, &self.registries, &self.chunk_shader, surface_ctx);
             }
         }
 
-        if let Some(cube_outline_model) = &self.cube_outline_model {
-            self.cube_outline_shader.bind(render_pass);
-            cube_outline_model.render(render_pass);
-        }
+        if layer_index == 0 {
+            if let Some(cube_outline_model) = &self.cube_outline_model {
+                self.cube_outline_shader.bind(render_pass);
+                cube_outline_model.render(render_pass);
+            }
 
-        self.particle_manager.render(&self.screen_info_binding, render_pass);
+            self.particle_manager.render(&self.screen_info_binding, render_pass);
+        }
     }
 
     fn blur_ssao<'a: 'b, 'b>(&'a mut self, surface_ctx: &'b dyn SurfaceCtx, encoder: &mut CommandEncoder) {
@@ -1107,18 +1193,18 @@ impl ScreenInfo {
 
 impl Binding for ScreenInfo {
     type LayoutConfig = ();
-    fn layout_config(&self) -> Self::LayoutConfig {
-        ()
+    fn layout_config(&self) -> &Self::LayoutConfig {
+        &()
     }
     fn create_resources<'a>(&'_ self) -> Vec<bespoke_engine::binding::Resource<'_>> {
         vec![bespoke_engine::binding::Resource::Simple(bytes_of(self).to_vec())]
     }
 
-    fn layout(_config: (), _ty: Option<wgpu::BindingType>) -> Vec<wgpu::BindGroupLayoutEntry> {
+    fn layout(_config: &(), _ty: Option<wgpu::BindingType>) -> Vec<wgpu::BindGroupLayoutEntry> {
         vec![simple_layout_entry(0)]
     }
 
-    fn shader_type(_config: ()) -> bespoke_engine::shader::ShaderType {
+    fn shader_type(_config: &()) -> bespoke_engine::shader::ShaderType {
         ShaderType {
             var_types: vec!["<uniform>".into()],
             wgsl_types: vec!["ScreenInfo".into()]

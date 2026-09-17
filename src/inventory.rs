@@ -1,8 +1,8 @@
-use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::ops::{AddAssign, SubAssign};
 
 use itertools::Itertools;
 
-use crate::{crafting::CraftingRecipe, items::{self, ItemIDRep}, registries::Registries};
+use crate::{crafting::{CraftingRecipe, PLAYER_CRAFTING_TYPE}, items::{self, ItemIDRep}, registries::Registries};
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
@@ -43,7 +43,7 @@ impl Inventory {
 
     pub fn calculate_crafting_result(&mut self, registries: &Registries) -> Option<CraftingRecipe> {
         let pattern = self.items[0..9].iter().chunks(3).into_iter().map(|row| row.map(|it| ItemStack { item: it.item.clone(), count: 1 }).collect_vec()).collect_vec();
-        let recipe = registries.crafting_registry.get_recipe_for_pattern(pattern, &registries);
+        let recipe = registries.crafting_registry.get_recipe_for_pattern(pattern, PLAYER_CRAFTING_TYPE, &registries);
         if let Some(recipe) = &recipe {
             self.items[9] = recipe.result.clone();
         } else {
@@ -61,12 +61,24 @@ impl Inventory {
             } else {
                 return;
             }
-            let flattened_pattern = recipe.pattern.iter().flatten().collect_vec();
-            for i in 0..9 {
-                if flattened_pattern[i].tool {
-                
-                } else {
-                    self.items[i] -= 1;
+            let mut grid_start_x = 4;
+            let mut grid_start_y = 4;
+            'x: for x in 0..3 {
+                for y in 0..3 {
+                    if !self.items[x*3+y].is_empty() {
+                        grid_start_x = grid_start_x.min(x);
+                        grid_start_y = grid_start_y.min(y);
+                        break 'x;
+                    }
+                }
+            }
+            for x in 0..recipe.pattern.len() {
+                for y in 0..recipe.pattern[x].len() {
+                    if recipe.pattern[x][y].tool {
+                    
+                    } else {
+                        self.items[(grid_start_x+x)*3+grid_start_y+y] -= 1;
+                    }
                 }
             }
         }

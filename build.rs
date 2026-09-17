@@ -3,6 +3,7 @@ use std::path::Path;
 use bespoke_engine::{resource_compiler::dir_contents, resource_loader::ResourceGenerator};
 use image::{ColorType, ImageFormat};
 
+include!("src/const_block_model_types.rs");
 include!("src/const_block_models.rs");
 
 fn main() {

@@ -1,14 +1,22 @@
-t_color: $0,0;
-s_color: $0,1;
-t_normal: $1,0;
-s_normal: $1,1;
-t_worldspace: $2,0;
-s_worldspace: $2,1;
-t_depth: $3,0;
-s_depth: $3,1;
-t_ssao: $4,0;
-s_ssao: $4,1;
-screen_info: $5;
+a_t_color: $0,0;
+a_s_color: $0,1;
+a_t_normal: $0,2;
+a_s_normal: $0,3;
+a_t_worldspace: $0,4;
+a_s_worldspace: $0,5;
+a_t_depth: $0,6;
+a_s_depth: $0,7;
+
+b_t_color: $1,0;
+b_s_color: $1,1;
+b_t_normal: $1,2;
+b_s_normal: $1,3;
+b_t_worldspace: $1,4;
+b_s_worldspace: $1,5;
+b_t_depth: $1,6;
+b_s_depth: $1,7;
+
+screen_info: $2;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -30,30 +38,30 @@ fn vs_main(
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOutput, @builtin(sample_index) sample_index: u32) -> @location(0) vec4<f32> {
-    let tex_coords = vec2i(i32(screen_info.screen_size.x*in.tex_coords.x), i32(screen_info.screen_size.y*in.tex_coords.y));
-    var color = textureLoad(t_color, tex_coords, sample_index);
-    var normal = textureLoad(t_normal, tex_coords, sample_index);
-    let ssao = textureSample(t_ssao, s_ssao, in.tex_coords);
-
-    let lighting = lighting(normal.xyz);
-    color = vec4f(color.xyz*ssao.r*lighting, color.w);
-    return color;
+struct FragmentOutput {
+  @location(0) color: vec4f,
+  @location(1) normal: vec4f,
+  @location(2) worldspace: vec4f,
+  @builtin(frag_depth) depth: f32,
 }
 
-fn lighting(normal: vec3f) -> f32 {
-    if (normal.x == 0.0 && normal.y == 1.0 && normal.z == 0.0) {
-        return 1.0;
-    } else if (normal.x == 0.0 && normal.y == 0.0 && normal.z == 1.0) {
-        return 0.8;
-    } else if (normal.x == 0.0 && normal.y == 0.0 && normal.z == -1.0) { 
-        return 0.8;
-    } else if (normal.x == 1.0 && normal.y == 0.0 && normal.z == 0.0) {
-        return 0.6;
-    } else if ((normal.x == -1.0 && normal.y == 0.0 && normal.z == 0.0)) {
-        return 0.6;
+@fragment
+fn fs_main(in: VertexOutput, @builtin(sample_index) sample_index: u32) -> FragmentOutput {
+    let tex_coords = vec2i(i32(screen_info.screen_size.x*in.tex_coords.x), i32(screen_info.screen_size.y*in.tex_coords.y));
+    var out: FragmentOutput;
+    
+    let a_depth = textureLoad(a_t_depth, tex_coords, sample_index);
+    let b_depth = textureLoad(b_t_depth, tex_coords, sample_index);
+    if a_depth < b_depth {
+        out.color = mix_colors(textureLoad(a_t_color, tex_coords, sample_index), textureLoad(b_t_color, tex_coords, sample_index));
+        out.normal = textureLoad(a_t_normal, tex_coords, sample_index);
+        out.worldspace = textureLoad(a_t_worldspace, tex_coords, sample_index);
+        out.depth = a_depth;
     } else {
-        return 0.5;
+        out.color = mix_colors(textureLoad(b_t_color, tex_coords, sample_index), textureLoad(a_t_color, tex_coords, sample_index));
+        out.normal = textureLoad(b_t_normal, tex_coords, sample_index);
+        out.worldspace = textureLoad(b_t_worldspace, tex_coords, sample_index);
+        out.depth = b_depth;
     }
+    return out;
 }

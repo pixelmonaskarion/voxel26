@@ -1,8 +1,6 @@
 {
     "pattern": [
-        "   ",
-        " C ",
-        "   "
+        "C"
     ],
     "result": "R",
     "substitutions": {
@@ -11,5 +9,6 @@
             "id": "rock_block",
             "count": 4
         }
-    }
+    },
+    "crafting_type": "player_crafting"
 }

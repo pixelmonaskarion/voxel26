@@ -25,6 +25,8 @@ mod game_serializer;
 mod tags;
 mod const_block_models;
 mod block_states;
+mod texture_types;
+mod lighting;
 
 include!(concat!(env!("OUT_DIR"), "/resources.rs"));
 

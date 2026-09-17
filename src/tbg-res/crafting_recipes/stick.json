@@ -1,8 +1,7 @@
 {
     "pattern": [
-        " P ",
-        " P ",
-        "   "
+        "P",
+        "P"
     ],
     "result": "S",
     "substitutions": {
@@ -11,5 +10,6 @@
             "id": "stick",
             "count": 4
         }
-    }
+    },
+    "crafting_type": "player_crafting"
 }

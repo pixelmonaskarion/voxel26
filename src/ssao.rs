@@ -45,6 +45,6 @@ pub fn generate_random_texture(surface_ctx: &dyn SurfaceCtx, width: u32, height:
             image.put_pixel(x, y, Rgba(rotation.extend(0.0).into()));
         }
     }
-    let texture = Texture::from_image(surface_ctx.device(), surface_ctx.queue(), &DynamicImage::ImageRgba32F(image), Some("Random Texture"), Some(format), None, None, None).unwrap();
+    let texture = Texture::from_image(surface_ctx, &DynamicImage::ImageRgba32F(image), Some("Random Texture"), Some(format), None, None, None, false).unwrap();
     texture
 }
