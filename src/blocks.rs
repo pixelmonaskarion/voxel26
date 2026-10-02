@@ -138,7 +138,7 @@ impl BlockRegistry {
             item: Some(items::GOLD_BLOCK),
             break_duration: Duration::from_secs_f32(0.1),
             drops: items::GOLD_BLOCK,
-            lighting_emission: [5; 3],
+            lighting_emission: [10, 0, 10],
         });
         self.register(Block {
             id: WOOD,

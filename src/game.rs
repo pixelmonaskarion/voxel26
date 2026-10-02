@@ -1,6 +1,6 @@
 use std::{collections::HashMap, f32::consts::PI, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::{AABB, vec3_mul_elements}, model::{Model, Render}, resource_loader::{ResourceConst, load_resource, load_resource_string}, shader::{PostProcessShaderInit, Shader, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, texture::{Texture, TextureLayoutConfig}, window::{BasicVertex, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
+use bespoke_engine::{binding::{Binding, Descriptor, DynamicOffsetUniform, DynamicOffsetUniformVec, UniformBinding, WgslType, create_layout, simple_layout_entry}, camera::{Camera, CameraRaw}, culling::{AABB, vec3_mul_elements}, model::{Model, Render}, resource_loader::{ResourceConst, load_resource, load_resource_string}, shader::{PostProcessShaderInit, Shader, ShaderInit, ShaderType, UniformShaderInit}, surface_context::SurfaceCtx, texture::{Texture, TextureLayoutConfig}, window::{BasicVertex, RenderStage, SurfaceConfig, WindowConfig, WindowHandler}};
 use bytemuck::{NoUninit, Pod, Zeroable, bytes_of};
 use glam::{IVec3, UVec2, Vec2, Vec3, ivec3, vec2, vec3};
 use itertools::Itertools;
@@ -96,7 +96,7 @@ impl <'a> Game<'a> {
         // let deferred_depth_texture = UniformBinding::new(surface_ctx.device(), "Deferred Depth Texture", DepthTexture::create_depth_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, "Deferred", MULTISAMPLE_COUNT.lock().unwrap().clone()), None);
         let intermediate_ssao_texture = UniformBinding::new(surface_ctx.device(), "Intermediate SSAO Texture", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, ssao_format, 1, Some(wgpu::AddressMode::ClampToEdge), None), None);
         let deferred_ssao_output = UniformBinding::new(surface_ctx.device(), "Deferred SSAO Output", Texture::blank_texture(surface_ctx.device(), surface_ctx.config().width, surface_ctx.config().height, ssao_format, 1, Some(wgpu::AddressMode::ClampToEdge), None), None);
-               let deferred_formats = vec![surface_ctx.config().format, deferred_data_format, deferred_data_format];
+        let deferred_formats = vec![surface_ctx.config().format, deferred_data_format, deferred_data_format];
 
         let ssao_kernel_samples = UniformBinding::new(surface_ctx.device(), "SSAO Kernel Samples", generate_ssao_kernel_samples(), None);
         let random_texture = UniformBinding::new(surface_ctx.device(), "Random Texture", generate_random_texture(surface_ctx, 64, 64, TextureFormat::Rgba16Float), None);
@@ -141,7 +141,7 @@ impl <'a> Game<'a> {
 
         let post_processing_shader = Shader::new(PostProcessShaderInit { resource: RES_SHADERS_POST_PROCESS_WGSL, formats: vec![surface_ctx.config().format], binding_layouts: vec![create_layout::<Texture>(&TextureLayoutConfig::default(), surface_ctx.device())], shader_types: vec![Texture::shader_type(&TextureLayoutConfig::default())], ..Default::default() }, surface_ctx.device());
         
-        let chunk_shader = Shader::new(UniformShaderInit { resource: RES_SHADERS_CHUNK_WGSL, formats: deferred_formats.clone(), uniforms: vec![&screen_info_binding, &registries.block_atlas_texture], vertex_buffers: vec![Vertex::desc()], shader_consts: vec![shader_atlas_x_blocks.clone(), shader_atlas_y_blocks.clone()], line_mode: wgpu::PolygonMode::Fill, ..Default::default() }, surface_ctx.device());
+        let chunk_shader = Shader::new(ShaderInit { resource: RES_SHADERS_CHUNK_WGSL, formats: deferred_formats.clone(), binding_layouts: vec![screen_info_binding.layout.clone(), registries.block_atlas_texture.layout.clone(), ChunkManager::lighting_bind_group_layout(surface_ctx.device()), create_layout::<[f32; 3]>(&(), surface_ctx.device()), ChunkManager::lighting_bind_group_layout(surface_ctx.device())], shader_types: vec![screen_info_binding.shader_type.clone(), registries.block_atlas_texture.shader_type.clone(), ShaderType::buffer_type(false, "u32".into()), <[f32; 3]>::shader_type(&()), ShaderType::buffer_type(false, "u32".into())], vertex_buffers: vec![Vertex::desc()], shader_consts: vec![shader_atlas_x_blocks.clone(), shader_atlas_y_blocks.clone()], line_mode: wgpu::PolygonMode::Fill, ..Default::default() }, surface_ctx.device());
 
         let cube_outline_shader = cube_outline_shader(surface_ctx.device(), deferred_formats.clone(), &screen_info_binding);
         let cube_outline_model = None;
@@ -225,15 +225,15 @@ impl <'a> Game<'a> {
 
         game_serializer.load_world(&mut _self);
 
-        if !_self.chunk_manager.get_chunk_or_create(ivec3(0, -1, 0)).data.generated_blocks {
-            _self.chunk_manager.generate_blocks(ivec3(0, -1, 0), [0.0; 3]);
-        }
-        if !_self.chunk_manager.get_chunk_or_create(IVec3::ZERO).data.generated_blocks {
-            _self.chunk_manager.generate_blocks(IVec3::ZERO, [0.0; 3]);
-        }
-        if !_self.chunk_manager.get_chunk_or_create(ivec3(0, 1, 0)).data.generated_blocks {
-            _self.chunk_manager.generate_blocks(ivec3(0, 1, 0), [0.0; 3]);
-        }
+        // if !_self.chunk_manager.get_chunk_or_create(ivec3(0, -1, 0)).data.generated_blocks {
+        //     _self.chunk_manager.generate_blocks(ivec3(0, -1, 0), [0.0; 3]);
+        // }
+        // if !_self.chunk_manager.get_chunk_or_create(IVec3::ZERO).data.generated_blocks {
+        //     _self.chunk_manager.generate_blocks(IVec3::ZERO, [0.0; 3]);
+        // }
+        // if !_self.chunk_manager.get_chunk_or_create(ivec3(0, 1, 0)).data.generated_blocks {
+        //     _self.chunk_manager.generate_blocks(ivec3(0, 1, 0), [0.0; 3]);
+        // }
 
         _self
     }
@@ -526,9 +526,9 @@ impl <'s> Game<'s> {
                             let before = self.chunk_manager.get_block(coordinate);
                             let before_state = self.chunk_manager.get_block_state(coordinate).cloned();
                             let state = self.registries.block_state_registry.get_state_provider(block_item.block).map(|it| it.new_state(coordinate, &mut self.chunk_manager));
-                            self.chunk_manager.set_block(coordinate, block_item.block, state, true, &self.registries);
+                            self.chunk_manager.set_block(coordinate, block_item.block, state, true, &self.registries, surface_ctx.device());
                             if self.player.colliding_world(&self.chunk_manager, &self.registries) {
-                                self.chunk_manager.set_block(coordinate, before, before_state, true, &self.registries);
+                                self.chunk_manager.set_block(coordinate, before, before_state, true, &self.registries, surface_ctx.device());
                             } else {
                                 *self.player.inventory.selected_item_mut() -= 1;
                             }
@@ -544,7 +544,7 @@ impl <'s> Game<'s> {
                             let before = self.chunk_manager.get_block(coordinate);
                             let before_block = self.registries.block_registry.get_block(&before);
                             if self.player.break_progress > before_block.break_duration {
-                                self.chunk_manager.set_block(coordinate, AIR, None, true, &self.registries);
+                                self.chunk_manager.set_block(coordinate, AIR, None, true, &self.registries, surface_ctx.device());
                                 for _ in 0..10 {
                                     self.particle_manager.add_particle(Particle {
                                         particle_type: ParticleType::BlockBreak,
@@ -614,6 +614,9 @@ impl <'s> Game<'s> {
         }
         if self.keys_down.contains(&KeyCode::Equal) {
             self.player.inventory.add(&ItemStack::new(items::GOLD_BLOCK.into(), 1));
+        }
+        if self.keys_down.contains(&KeyCode::Minus) {
+            self.player.inventory.add(&ItemStack::new(items::STONE_BLOCK.into(), 1));
         }
 
         //inventory stuff
@@ -742,6 +745,7 @@ impl <'s> Game<'s> {
                     needed_chunk_updates.insert(actual_chunk_pos, needed_update.synchronous);
                 }
            }
+        //    self.chunk_manager.clean_top_block_data(ivec2(pos.x, pos.z), surface_ctx.device());
         }
         while let Some(entity) = move_entities.pop() {
             self.chunk_manager.get_chunk_or_create(chunk_for_world_position(entity.position.into())).add_entity(entity);
@@ -760,8 +764,10 @@ impl <'s> Game<'s> {
             }
             let relative_pos = ivec3(chunk_pos[0] + (self.player.camera.eye.x / CHUNK_SIZE as f32).floor() as i32, chunk_pos[1] + (self.player.camera.eye.y / CHUNK_SIZE as f32).floor() as i32, chunk_pos[2] + (self.player.camera.eye.z / CHUNK_SIZE as f32).floor() as i32);
             if !self.chunk_manager.chunk_loaded(relative_pos) {
-                self.chunk_manager.get_chunk_or_create(relative_pos);
-                self.chunk_manager.generate_blocks(relative_pos, self.player.position.into());
+                let chunk = self.chunk_manager.get_chunk_or_create(relative_pos);
+                if !chunk.creating_blocks {
+                    self.chunk_manager.generate_blocks(relative_pos, self.player.position.into());
+                }
             } else {
                 let chunk = self.chunk_manager.get_chunk_or_create(relative_pos);
                 if chunk.model.is_none() && !chunk.creating_model {
@@ -769,7 +775,7 @@ impl <'s> Game<'s> {
                 }
             }
         }
-        self.chunk_manager.poll_channels(self.player.position.into(), &self.registries);
+        self.chunk_manager.poll_channels(self.player.position.into(), &self.registries, surface_ctx.device());
     }
 
     fn update_render_setup(&mut self, surface_ctx: &dyn SurfaceCtx, delta: Duration) {

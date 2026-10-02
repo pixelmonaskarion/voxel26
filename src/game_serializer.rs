@@ -8,7 +8,7 @@ use itertools::Itertools;
 use rkyv::rancor;
 use thiserror::Error;
 
-use crate::{chunk::{ArchivedChunkData, Chunk, ChunkData}, game::Game, player::{ArchivedPlayer, Player}, registries::Registries};
+use crate::{chunk::{ArchivedChunkData, Chunk, ChunkData}, game::Game, lighting::{BlockLightingData, SkyLightingData}, player::{ArchivedPlayer, Player}};
 
 pub struct GameSerializer {
     project_dirs: ProjectDirs,
@@ -85,11 +85,13 @@ impl GameSerializer {
         let chunk_data = rkyv::deserialize::<ChunkData, rancor::Error>(rkyv::access::<ArchivedChunkData, rancor::Error>(&chunk_bytes).unwrap()).unwrap();
         game.chunk_manager.replace_chunk(pos, Chunk {
             creating_model: false,
+            creating_blocks: false,
             data: chunk_data,
             lod: 0,
             model: None,
             needed_chunk_updates: vec![],
-            
+            lighting: BlockLightingData::new(),
+            skylight: SkyLightingData::new(),
         }, &game.registries);
         Ok(())
     }

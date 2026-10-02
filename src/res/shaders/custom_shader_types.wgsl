@@ -8,7 +8,6 @@ struct VoxelVertex {
     @location(0) position: vec4f,
     @location(1) color: vec4f,
     @location(2) normal: vec4f,
-    @location(3) lighting: vec4f,
 }
 
 struct ParticleInstance {
