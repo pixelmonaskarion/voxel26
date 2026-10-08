@@ -111,38 +111,15 @@ impl SkyLightingData {
     }
 }
 
-// #[derive(serde::Serialize, serde::Deserialize, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 #[derive(Clone)]
 pub struct TopBlockData {
     data: Vec<i32>,
-    // dirty: bool,
-    // buffer: Buffer,
-    // pub binding: BindGroup,
 }
 
 impl TopBlockData {
-    pub fn new(device: &Device) -> Self {
-        let data = vec![i32::MIN; (CHUNK_SIZE * CHUNK_SIZE) as usize];
-        // let buffer = device.create_buffer_init(&BufferInitDescriptor {
-        //     contents: cast_slice(&data),
-        //     label: None,
-        //     usage: BufferUsages::STORAGE | BufferUsages::UNIFORM,
-        // });
-        // let binding = device.create_bind_group(&BindGroupDescriptor {
-        //     label: None,
-        //     layout: &ChunkManager::top_block_bind_group_layout(device),
-        //     entries: &[
-        //         BindGroupEntry {
-        //             binding: 0,
-        //             resource: buffer.as_entire_binding(),
-        //         }
-        //     ]
-        // });
+    pub fn new() -> Self {
         Self {
-            data,
-            // dirty: false,
-            // buffer,
-            // binding
+            data: vec![i32::MIN; (CHUNK_SIZE * CHUNK_SIZE) as usize],
         }
     }
 
@@ -154,31 +131,7 @@ impl TopBlockData {
     pub fn set_top_block(&mut self, x: u32, z: u32, y: i32) {
         let block_index = x * CHUNK_SIZE + z;
         self.data[block_index as usize] = y;
-        // self.dirty = true;
     }
-
-    // pub fn update_buffer(&mut self, device: &Device) {
-    //     if self.dirty {
-    //         let buffer = device.create_buffer_init(&BufferInitDescriptor {
-    //             contents: cast_slice(&self.data),
-    //             label: None,
-    //             usage: BufferUsages::STORAGE | BufferUsages::UNIFORM,
-    //         });
-    //         let binding = device.create_bind_group(&BindGroupDescriptor {
-    //             label: None,
-    //             layout: &ChunkManager::top_block_bind_group_layout(device),
-    //             entries: &[
-    //                 BindGroupEntry {
-    //                     binding: 0,
-    //                     resource: buffer.as_entire_binding(),
-    //                 }
-    //             ]
-    //         });
-    //         self.buffer = buffer;
-    //         self.binding = binding;
-    //         self.dirty = false;
-    //     }
-    // }
 }
 
 #[cfg(test)]

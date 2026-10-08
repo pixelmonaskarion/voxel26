@@ -296,6 +296,13 @@ pub struct ChunkManager {
     gen_model_rx: mpsc::Receiver<GenerateChunkModelResponse>,
     skylights: SkylightMap,
 }
+
+pub struct ContinuousUpdateState {
+    pub first_x: bool,
+    pub first_y: bool,
+    pub first_z: bool,
+}
+
 #[allow(unused)]
 impl ChunkManager {
     pub fn new(seed: u32, registries: Arc<Registries>, surface_ctx: &dyn SurfaceCtx) -> Self {
@@ -375,7 +382,7 @@ impl ChunkManager {
         });
         Self {
             chunks: ChunkMap::new(),
-            skylights: SkylightMap::new(surface_ctx.device()),
+            skylights: SkylightMap::new(),
             gen_blocks_tx: gen_blocks_req_tx,
             gen_blocks_rx: gen_blocks_res_rx,
             gen_model_tx: gen_model_req_tx,
@@ -394,7 +401,7 @@ impl ChunkManager {
                 chunk.needed_chunk_updates.push(NeededChunkUpdate { relative_chunk_pos: ivec3(0, 0, 0), synchronous: false });
                 chunk.needed_chunk_updates.extend(neighbors(IVec3::ZERO).into_iter().map(|it| NeededChunkUpdate { relative_chunk_pos: it.into(), synchronous: false }));
                 self.update_skylight_map_for_chunk(res.chunk_position, registries);
-                self.update_lighting_around(res.chunk_position, registries);
+                self.update_lighting_around(res.chunk_position, None, registries);
             }
         }
         while let Ok(res) = self.gen_model_rx.try_recv() {
@@ -1109,18 +1116,90 @@ impl ChunkManager {
         }
     }
 
-    pub fn replace_chunk(&mut self, chunk_position: IVec3, chunk: Chunk, registries: &Registries) {
+    pub fn replace_chunk(&mut self, chunk_position: IVec3, chunk: Chunk, update_lighting: bool, registries: &Registries) {
         self.chunks.set(chunk_position, chunk);
-        self.update_skylight_map_for_chunk(chunk_position, registries);
-        self.update_lighting_around(chunk_position, registries);
+        if update_lighting { 
+            self.update_skylight_map_for_chunk(chunk_position, registries);
+            self.update_lighting_around(chunk_position, None, registries);
+        }
     }
+
+    pub fn update_all_lighting(&mut self, registries: &Registries) {
+        //top block
+        let mut max_x = 0;
+        let mut max_y = 0;
+        let mut max_z = 0;
+        let mut min_x = 0;
+        let mut min_y = 0;
+        let mut min_z = 0;
+        for pos in self.chunk_positions() {
+            if pos.x > max_x {
+                max_x = pos.x;
+            }
+            if pos.x < min_x {
+                min_x = pos.x;
+            }
+            if pos.y > max_y {
+                max_y = pos.y;
+            }
+            if pos.y < min_y {
+                min_y = pos.y;
+            }
+            if pos.z > max_z {
+                max_z = pos.z;
+            }
+            if pos.z < min_z {
+                min_z = pos.z;
+            }
+        }
+        for cx in min_x..=max_x {
+            for cz in min_z..=max_z {
+                let mut top_block_data = TopBlockData::new();
+                let mut blocks_found = 0;
+                'cy: for cy in (min_y..=max_y).rev() {
+                    if let Some(chunk) = self.chunks.get_mut(ivec3(cx, cy, cz)) {
+                        chunk.lighting = BlockLightingData::new();
+                        chunk.skylight = SkyLightingData::new();
+                        for x in 0..CHUNK_SIZE {
+                            for z in 0..CHUNK_SIZE {
+                                let top_block_here = top_block_data.get_top_block(x, z);
+                                'y: for y in (0..CHUNK_SIZE).rev() {
+                                    if y as i32 +cy*CHUNK_SIZE as i32 > top_block_here {
+                                        if registries.block_registry.get_block(&chunk.data.blocks[index_in_chunk(x, y, z)]).layer == SOLID_LAYER {
+                                            top_block_data.set_top_block(x, z, y as i32 +cy*CHUNK_SIZE as i32);
+                                            blocks_found += 1;
+                                            break 'y;
+                                        }
+                                    } else {
+                                        break 'y;
+                                    }
+                                    if blocks_found >= CHUNK_SIZE*CHUNK_SIZE {
+                                        break 'cy;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                self.skylights.skylights.insert(ivec2(cx, cz), top_block_data);
+            }
+        }
+        let mut initial = true;
+        for cx in min_x..=max_x {
+            for cy in min_y..=max_y {
+                for cz in min_z..=max_z {
+                    self.update_lighting_around(ivec3(cx, cy, cz), Some(ContinuousUpdateState { first_x: cx == min_x, first_y: cy == min_y, first_z: cz == min_z }), registries);
+                }
+            }
+        }
+    } 
 
     pub fn update_skylight_map_for_chunk(&mut self, chunk_position: IVec3, registries: &Registries) {
         let pos_2d = ivec2(chunk_position.x, chunk_position.z);
         let mut skylight = if let Some(skylight) = self.skylights.skylights.remove(&pos_2d) {
             skylight
         } else {
-            self.skylights.empty_top_block_data.clone()
+            TopBlockData::new()
         };
 
         for x in 0..CHUNK_SIZE {
@@ -1147,7 +1226,7 @@ impl ChunkManager {
         let skylight = if let Some(skylight) = self.skylights.skylights.get_mut(&chunk_pos_2d) {
             skylight
         } else {
-            self.skylights.skylights.insert(chunk_pos_2d, TopBlockData::new(device));
+            self.skylights.skylights.insert(chunk_pos_2d, TopBlockData::new());
             self.skylights.skylights.get_mut(&chunk_pos_2d).unwrap()
         };
 
@@ -1164,7 +1243,7 @@ impl ChunkManager {
         let mut skylight = if let Some(skylight) = self.skylights.skylights.remove(&chunk_pos_2d) {
             skylight
         } else {
-            TopBlockData::new(device)
+            TopBlockData::new()
         };
 
         let x = block_position.x.rem_euclid(CHUNK_SIZE as i32) as u32;
@@ -1305,13 +1384,22 @@ impl ChunkManager {
         if let Some(chunk) = self.chunks.main.get_mut(&ivec3(cx, cy, cz)) {
             chunk.set_block(uvec3(bx, by, bz), block_id, state, update_synchronously, registries);
         }
-        self.update_lighting_around(ivec3(cx, cy, cz), registries);
+        self.update_lighting_around(ivec3(cx, cy, cz), None, registries);
 
     }
 
-    pub fn update_lighting_around(&mut self, chunk_position: IVec3, registries: &Registries) {
-        let mut lighting_grid = vec![BlockLightingData::new(); 3*3*3];
-        let mut skylight_grid = vec![SkyLightingData::new(); 3*3*3];
+    pub fn update_lighting_around(&mut self, chunk_position: IVec3, mut continuous: Option<ContinuousUpdateState>, registries: &Registries) {
+        continuous = None; //WIP
+        let mut lighting_grid = if continuous.is_some() {
+            (-1..=1).map(|x| (-1..=1).map(move |y| (-1..=1).map(move |z| ivec3(x, y, z)))).flatten().flatten().map(|pos| self.chunks.get(chunk_position+pos).map(|it| it.lighting.clone()).unwrap_or_else(|| BlockLightingData::new())).collect_vec()
+        } else {
+            vec![BlockLightingData::new(); 3*3*3]
+        };
+        let mut skylight_grid = if continuous.is_some() {
+            (-1..=1).map(|x| (-1..=1).map(move |y| (-1..=1).map(move |z| ivec3(x, y, z)))).flatten().flatten().map(|pos| self.chunks.get(chunk_position+pos).map(|it| it.skylight.clone()).unwrap_or_else(|| SkyLightingData::new())).collect_vec()
+        } else {
+            vec![SkyLightingData::new(); 3*3*3]
+        };
         let mut set_or_get_lighting = |x, y, z, light| {
             let chunk_pos = chunk_for_block_position(ivec3(x, y, z));
             if chunk_pos.x > 1 || chunk_pos.y > 1 || chunk_pos.z > 1 || chunk_pos.x < -1 || chunk_pos.y < -1 || chunk_pos.z < -1 {
@@ -1356,12 +1444,22 @@ impl ChunkManager {
         };
         let mut updates = VecDeque::new();
         let mut skylight_updates = VecDeque::new();
+        // let mut required_chunks = vec![];
+        
         for x in -(CHUNK_SIZE as i32)+1..CHUNK_SIZE as i32*2 {
             for z in -(CHUNK_SIZE as i32)+1..CHUNK_SIZE as i32*2 {
                 let top_block_here = self.top_block(x+chunk_position.x * CHUNK_SIZE as i32, z+chunk_position.z * CHUNK_SIZE as i32);
+                let top_block_px = self.top_block(x+1+chunk_position.x * CHUNK_SIZE as i32, z+chunk_position.z * CHUNK_SIZE as i32);
+                let top_block_nx = self.top_block(x-1+chunk_position.x * CHUNK_SIZE as i32, z+chunk_position.z * CHUNK_SIZE as i32);
+                let top_block_pz = self.top_block(x+chunk_position.x * CHUNK_SIZE as i32, z+1+chunk_position.z * CHUNK_SIZE as i32);
+                let top_block_nz = self.top_block(x+chunk_position.x * CHUNK_SIZE as i32, z-1+chunk_position.z * CHUNK_SIZE as i32);
                 for y in -(CHUNK_SIZE as i32)+1..CHUNK_SIZE as i32*2 {
                     let skylight_here = top_block_here <= y as i32 +chunk_position.y * CHUNK_SIZE as i32;
-                    let skylight_here = if skylight_here { 15 } else { 0 };
+                    let skylight_px = top_block_px <= y as i32 +chunk_position.y * CHUNK_SIZE as i32;
+                    let skylight_nx = top_block_nx <= y as i32 +chunk_position.y * CHUNK_SIZE as i32;
+                    let skylight_pz = top_block_pz <= y as i32 +chunk_position.y * CHUNK_SIZE as i32;
+                    let skylight_nz = top_block_nz <= y as i32 +chunk_position.y * CHUNK_SIZE as i32;
+                    let skylight_value = if skylight_here { 15 } else { 0 };
                     let here_relative_pos = ivec3(x, y as i32, z);
                     if let Some(chunk) = self.chunks.get(chunk_for_block_position(here_relative_pos+chunk_position * CHUNK_SIZE as i32)) {
                         let x = x.rem_euclid(CHUNK_SIZE as i32) as u32;
@@ -1372,8 +1470,8 @@ impl ChunkManager {
                             set_or_get_lighting(here_relative_pos.x, here_relative_pos.y, here_relative_pos.z, Some(lighting_emission));
                             updates.push_back(here_relative_pos);
                         }
-                        if skylight_here != 0 {
-                            set_or_get_skylight(here_relative_pos.x, here_relative_pos.y, here_relative_pos.z, Some(skylight_here));
+                        set_or_get_skylight(here_relative_pos.x, here_relative_pos.y, here_relative_pos.z, Some(skylight_value));
+                        if skylight_here && !(skylight_px && skylight_pz && skylight_nx && skylight_nz) {
                             skylight_updates.push_back(here_relative_pos);
                         }
                     }
@@ -1487,14 +1585,12 @@ impl ChunkMap {
 
 struct SkylightMap {
     skylights: FxHashMap<IVec2, TopBlockData>,
-    empty_top_block_data: TopBlockData,
 }
 
 impl SkylightMap {
-    pub fn new(device: &Device) -> Self {
+    pub fn new() -> Self {
         Self {
             skylights: FxHashMap::default(),
-            empty_top_block_data: TopBlockData::new(device),
         }
     }
 }

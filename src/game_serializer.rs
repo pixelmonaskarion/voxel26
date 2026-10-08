@@ -69,6 +69,7 @@ impl GameSerializer {
                     println!("{e:?}");
                 }
             }
+            game.chunk_manager.update_all_lighting(&game.registries);
         }
     }
 
@@ -92,7 +93,7 @@ impl GameSerializer {
             needed_chunk_updates: vec![],
             lighting: BlockLightingData::new(),
             skylight: SkyLightingData::new(),
-        }, &game.registries);
+        }, false, &game.registries);
         Ok(())
     }
 
